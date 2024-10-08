@@ -3,7 +3,7 @@ The script consists of 2 parts:
 2. Execute cmd commands - IGNORE THIS ONE FOR NOW
 
 General comments:
-- log well formatted messages inclusing level, format, date format
+- log well formatted messages inclusing level, format, date format. It should be logged to console and to ./out folder, make error log separate. 
 - log runtime after 1 script part is executed
 - make comments in the code to easier understand logic, especially in longer and more complicated methods
 
