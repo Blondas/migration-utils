@@ -2,4 +2,4 @@
 __pycache__
 venv
 db2_config.py
-out
+out*
