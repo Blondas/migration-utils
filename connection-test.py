@@ -1,11 +1,5 @@
 import ibm_db
-
-# Connection details
-database = "your_database_name"
-hostname = "your_hostname"
-port = "your_port"
-username = "your_username"
-password = "your_password"
+from db2_config import DB2_CONFIG
 
 # Create the connection string
 conn_string = (
