@@ -2,6 +2,11 @@ The script consists of 2 parts:
 1. Query sql database, and build cmd commands
 2. Execute cmd commands - IGNORE THIS ONE FOR NOW
 
+General comments:
+- log well formatted messages inclusing level, format, date format
+- log runtime after 1 script part is executed
+- make comments in the code to easier understand logic, especially in longer and more complicated methods
+
 Part 1:
 1. All results from sql queries should be saved to ./out/sql directory
 2. If not empty out directory already exists, rename it to ./out/sql_{DATETIME} (take datetime from the folder creation time)
