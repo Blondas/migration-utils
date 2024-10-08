@@ -19,8 +19,8 @@ try:
     # Execute a query
     # sql = "SELECT * FROM your_table_name"
     sql = """
-    SELECT ag.name, ag.agid_name, seg.table_name
-    FROM arsag.ag
+    SELECT TRIM(TRANSLATE(ag.name, '', 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789')), ag.agid_name, seg.table_name
+    FROM arsag ag
     INNER JOIN arsseg seg ON ag.agid = seg.agid
     WHERE ag.name NOT LIKE 'System%'
     ORDER BY 2, 3
