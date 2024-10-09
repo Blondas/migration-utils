@@ -2,7 +2,6 @@ import ibm_db
 import csv
 import os
 import logging
-import shutil
 from datetime import datetime
 from db2_config import DB2_CONFIG
 
@@ -99,7 +98,7 @@ def generate_commands(documents_file, metadata_dir, output_file):
                     # Start or add to the current command
                     if not current_command:
                         current_command = [
-                            f"arsadmin retrieve -I LAZARI4 -u t320818 -g {agname}",
+                            f"arsadmin retrieve -I ODLAHD01 -u admin -g {agname}",
                             f"-n {pri_nid}-{sec_nid}",
                             f"-d ./out/data/{agid_name}/"
                         ]
@@ -118,77 +117,79 @@ def generate_commands(documents_file, metadata_dir, output_file):
     
     return len(commands)
 
+def execute_table_list_sql(conn, logger):
+    table_list_sql = """
+    SELECT TRIM(TRANSLATE(ag.name, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789', '')), ag.agid_name, seg.table_name
+    FROM arsag ag
+    INNER JOIN arsseg seg ON ag.agid = seg.agid
+    WHERE ag.name NOT LIKE 'System%'
+    ORDER BY 2, 3
+    """
+    columns, results = execute_query(conn, table_list_sql)
+    logger.info(f"Fetched {len(results)} tables")
+    return columns, results
+
+def save_tables_metadata_to_sql(conn, tables_metadata_dir, logger):
+    os.makedirs(tables_metadata_dir, exist_ok=True)
+    total_metadata_rows = 0
+
+    for row in results:
+        table_name = row[2]  # Assuming table_name is the third column
+        table_metadata_sql = f"""
+        SELECT DISTINCT doc_name, pri_nid, sec_nid
+        FROM {table_name}
+
+        UNION
+
+        SELECT DISTINCT
+        CAST(resource AS VARCHAR(10)),
+        pri_nid, sec_nid
+        FROM {table_name}
+        WHERE resource > 0
+
+        UNION
+
+        SELECT DISTINCT
+        TRIM(TRANSLATE(doc_name, '', 'ABCDEFGHIJKLMNOPQRSTUVWXYZ')) ||
+        LEFT(TRIM(TRANSLATE(doc_name, '', '0123456789')), 3) || '1',
+        pri_nid, sec_nid
+        FROM {table_name}
+        """
+        columns, results = execute_query(conn, table_metadata_sql)
+        total_metadata_rows += len(results)
+
+        metadata_file = os.path.join(tables_metadata_dir, f"{table_name}.csv")
+        save_to_csv(metadata_file, ['DOC_NAME', 'PRI_NID', 'SEC_NID'], results)
+        logger.info(f"Saved metadata for {table_name} to {metadata_file}")
+
+    logger.info(f"Total metadata rows fetched: {total_metadata_rows}")
+
 def main():
     logger, error_logger = setup_logging()
     start_time = datetime.now()
 
     try:
-        # Create or rename the out directory
+        # Create the out directory
         out_dir = './out/sql'
-        if os.path.exists(out_dir):
-            old_out_dir = f"{out_dir}_{datetime.fromtimestamp(os.path.getctime(out_dir)).strftime('%Y%m%d_%H%M%S')}"
-            os.rename(out_dir, old_out_dir)
-            logger.info(f"Renamed existing out directory to {old_out_dir}")
-        os.makedirs(out_dir, exist_ok=True)
+        if not os.path.exists(out_dir):
+            os.makedirs(out_dir, exist_ok=True)
         
         conn = connect_to_db()
         logger.info("Connected to database")
 
-        # Execute table_list_sql
-        table_list_sql = """
-        SELECT TRIM(TRANSLATE(ag.name, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789', '')), ag.agid_name, seg.table_name
-        FROM arsag ag
-        INNER JOIN arsseg seg ON ag.agid = seg.agid
-        WHERE ag.name NOT LIKE 'System%'
-        ORDER BY 2, 3
-        """
-        columns, results = execute_query(conn, table_list_sql)
-        logger.info(f"Fetched {len(results)} rows from table_list_sql")
-        
-        # Save results to documents.csv
+        # Execute table_list_sql & save to documents.csv
+        columns, results = execute_table_list_sql(conn, logger)
         documents_file = os.path.join(out_dir, 'documents.csv')
         save_to_csv(documents_file, ['AGNAME', 'AGID_NAME', 'TABLE_NAME'], results)
         logger.info(f"Saved table list to {documents_file}")
 
-        # Process each table
-        metadata_dir = os.path.join(out_dir, 'documents_metadata')
-        os.makedirs(metadata_dir, exist_ok=True)
-        total_metadata_rows = 0
-
-        for row in results:
-            table_name = row[2]  # Assuming table_name is the third column
-            table_metadata_sql = f"""
-            SELECT DISTINCT doc_name, pri_nid, sec_nid
-            FROM {table_name}
-
-            UNION
-
-            SELECT DISTINCT
-            CAST(resource AS VARCHAR(10)),
-            pri_nid, sec_nid
-            FROM {table_name}
-            WHERE resource > 0
-
-            UNION
-
-            SELECT DISTINCT
-            TRIM(TRANSLATE(doc_name, '', 'ABCDEFGHIJKLMNOPQRSTUVWXYZ')) ||
-            LEFT(TRIM(TRANSLATE(doc_name, '', '0123456789')), 3) || '1',
-            pri_nid, sec_nid
-            FROM {table_name}
-            """
-            columns, results = execute_query(conn, table_metadata_sql)
-            total_metadata_rows += len(results)
-            
-            metadata_file = os.path.join(metadata_dir, f"{table_name}.csv")
-            save_to_csv(metadata_file, ['DOC_NAME', 'PRI_NID', 'SEC_NID'], results)
-            logger.info(f"Saved metadata for {table_name} to {metadata_file}")
-
-        logger.info(f"Total metadata rows fetched: {total_metadata_rows}")
+        # Process tables to get prinid, secnid
+        tables_metadata_dir = os.path.join(out_dir, 'documents_metadata')
+        save_tables_metadata_to_sql(conn, tables_metadata_dir, logger)
 
         # Generate commands
         command_file = './out/arsadmin_retrieve.txt'
-        command_count = generate_commands(documents_file, metadata_dir, command_file)
+        command_count = generate_commands(documents_file, tables_metadata_dir, command_file)
         logger.info(f"Generated {command_count} arsadmin retrieve commands in {command_file}")
 
     except Exception as e:
