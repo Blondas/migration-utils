@@ -3,7 +3,7 @@ The script consists of 2 parts:
 2. Execute cmd commands - IGNORE THIS ONE FOR NOW
 
 General comments:
-- log well formatted messages inclusing level, format, date format. It should be logged to console and to ./out folder, make error log separate. 
+- log well formatted messages including level, format, date format. It should be logged to console and to ./out folder, make error log separate. 
 - log runtime after 1 script part is executed
 - make comments in the code to easier understand logic, especially in longer and more complicated methods
 
@@ -49,6 +49,13 @@ table_metadata_sql = """
 - in case there are different pairs PRI_NID and SEC_NID for given entry: move it to the next arsadmin retrieve command
 - save (append the entries) to file ./out/arsadmin_retrieve.txt
 - log to console success (with context details i.e. how many entries created in arsadmin_retrieve.txt) or fail
+
+PART 2:
+10. When the arsadmin fails due to data corruption, not available etc. the rest of the requested objects are not fulfilled. hence it is required to "check" the ret code, if nonzero it should be logged for further investigation and the arsadmin retrieve command should be rerun starting from the next not corrupted document 
+11. the arsadmin retireve commands should run in separate threads - number configurable, by default 8
+12. In case the script is stopped, it should be able to resume it from where it finished
+13. support performance testing, i.e. how fast all together threads download 10gb of data, depends on with  how many threads it is running: 2, 4, 8, 12, 16, threads. Log the result to the file. ideally this should be loosely coupled with the main script
+14. If there is less then a given % of free space on disk, do not start the next threads - only allow those running to finish their job. log the information.
 
 arsadmin retrieve -I LAZARI4 -u t320818 -g <AGNAME> -n <pri_nid>-<sec_nid> -d ./out/data/<AGID_NAME>/ <DOC_NAME>
  
