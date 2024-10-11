@@ -1,34 +1,9 @@
 import ibm_db
 import csv
 import os
-import logging
 from datetime import datetime
 from db2_config import DB2_CONFIG
-
-# Set up logging
-def setup_logging():
-    log_dir = './out/logs'
-    os.makedirs(log_dir, exist_ok=True)
-    
-    # Configure logging to console and file
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S',
-        handlers=[
-            logging.StreamHandler(),
-            logging.FileHandler(f'{log_dir}/script.log')
-        ]
-    )
-    
-    # Set up error logging
-    error_logger = logging.getLogger('error_logger')
-    error_logger.setLevel(logging.ERROR)
-    error_handler = logging.FileHandler(f'{log_dir}/error.log')
-    error_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-    error_logger.addHandler(error_handler)
-    
-    return logging.getLogger(__name__), error_logger
+from logging_config import setup_logging
 
 # Database connection function
 def connect_to_db():
@@ -129,7 +104,7 @@ def execute_table_list_sql(conn, logger):
     logger.info(f"Fetched {len(results)} tables")
     return columns, results
 
-def save_tables_metadata_to_sql(conn, tables_metadata_dir, logger):
+def save_tables_metadata_to_sql(conn, results, tables_metadata_dir, logger):
     os.makedirs(tables_metadata_dir, exist_ok=True)
     total_metadata_rows = 0
 
@@ -185,7 +160,7 @@ def main():
 
         # Process tables to get prinid, secnid
         tables_metadata_dir = os.path.join(out_dir, 'documents_metadata')
-        save_tables_metadata_to_sql(conn, tables_metadata_dir, logger)
+        save_tables_metadata_to_sql(conn, results, tables_metadata_dir, logger)
 
         # Generate commands
         command_file = './out/arsadmin_retrieve.txt'
