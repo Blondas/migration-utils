@@ -75,7 +75,7 @@ def execute_arsadmin_commands(command_file, state_file, log_file, err_log_file,m
                                                            f", skipping remaining documents in this command, command: `{full_command}`")
                         break
                 elif "ARS1168E Unable to determine Storage Node" in stderr:
-                    match = re.search(r"-n (\d+-\d+)", stderr)
+                    match = re.search(r"-n (\d+-\d+)", full_command)
                     storage_node = ", storage node: " + match.group(1) if match else ""
                     error_logger.error(f"code: {return_code}{storage_node}, message: Unable to determine Storage Node"
                                                        f", skipping remaining documents in this command, command: `{full_command}`")
