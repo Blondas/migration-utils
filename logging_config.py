@@ -1,4 +1,5 @@
 import logging
+import os
 
 def setup_logging(log_file, error_log_file):
     log_dir = './out/logs'

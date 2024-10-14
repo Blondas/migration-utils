@@ -140,7 +140,10 @@ def save_tables_metadata_to_sql(conn, results, tables_metadata_dir, logger):
     logger.info(f"Total metadata rows fetched: {total_metadata_rows}")
 
 def main():
-    logger, error_logger = setup_logging()
+    logger, error_logger = setup_logging(
+        "db2_metadata_retrieval_and_command_generation.log",
+        "db2_metadata_retrieval_and_command_generation_error.log"
+    )
     start_time = datetime.now()
 
     try:

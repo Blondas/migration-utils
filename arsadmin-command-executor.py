@@ -1,16 +1,14 @@
 import subprocess
 import os
-import logging
 import shutil
 import re
-
+from logging_config import setup_logging
 
 def execute_arsadmin_commands(command_file, state_file, log_file, min_free_space_percent=10):
-    logger = logging.getLogger(__name__)
-    file_handler = logging.FileHandler(log_file)
-    file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-    logger.addHandler(file_handler)
-    logger.setLevel(logging.INFO)
+    logger, error_logger = setup_logging(
+        "db2_metadata_retrieval_and_command_generation.log",
+        "db2_metadata_retrieval_and_command_generation_error.log"
+    )
 
     def get_free_space_percent():
         total, used, free = shutil.disk_usage("/")
@@ -24,7 +22,7 @@ def execute_arsadmin_commands(command_file, state_file, log_file, min_free_space
         return base_command, doc_names, output_dir
 
     def execute_command(command):
-        logger.info(f"Executing command: {command}")
+        logger.info(f"Executing command: `{command}` ...")
         process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         stdout, stderr = process.communicate()
         return process.returncode, stdout, stderr
@@ -65,25 +63,23 @@ def execute_arsadmin_commands(command_file, state_file, log_file, min_free_space
             return_code, stdout, stderr = execute_command(full_command)
 
             if return_code != 0:
-                logger.error(f"Command failed with return code {return_code}")
-                logger.error(f"Error output: {stderr}")
+                error_message = f"code: {return_code}, message: {stderr}"
 
                 if "ARS1159E Unable to retrieve the object" in stderr:
                     match = re.search(r"Unable to retrieve the object (\S+)", stderr)
                     if match:
                         failing_doc = match.group(1)
-                        logger.error(f"Failed to retrieve document: {failing_doc}")
-                        logger.error(f"Failing command: {base_command} {failing_doc}")
+                        error_logger.error(error_message + f",failed document: {failing_doc}, command: {base_command} {failing_doc}")
+
                         doc_names = doc_names[doc_names.index(failing_doc) + 1:]
                     else:
-                        logger.error(
-                            "Could not identify failing document. Skipping remaining documents in this command.")
+                        error_logger.error(error_message + "Could not identify failing document. Skipping remaining documents in this command.")
                         break
                 elif "ARS1168E Unable to determine Storage Node" in stderr or "ARS1110E The application group" in stderr:
-                    logger.error(f"Critical error. Skipping command: {full_command}")
+                    error_logger.error(error_message + f", command: `{command}`")
                     break
                 else:
-                    logger.error(f"Unknown error. Skipping remaining documents in this command.")
+                    error_logger.error(error_message + f"Unknown error. Skipping remaining documents in this command.")
                     break
             else:
                 logger.info("Command executed successfully")
@@ -93,11 +89,6 @@ def execute_arsadmin_commands(command_file, state_file, log_file, min_free_space
         save_state(command_index)
 
     logger.info("Finished executing commands")
-
-
-# Usage example:
-# execute_arsadmin_commands('arsadmin_commands.txt', 'execution_state.txt', 'arsadmin_execution.log')
-
 
 def main():
     execute_arsadmin_commands(
