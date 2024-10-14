@@ -64,27 +64,29 @@ def execute_arsadmin_commands(command_file, state_file, log_file, err_log_file,m
 
             if return_code != 0:
                 if "ARS1159E Unable to retrieve the object" in stderr:
-                    match = re.search(r"Unable to retrieve the object (\S+)", stderr)
+                    match = re.search(r"Unable to retrieve the object >(\S+)<", stderr)
                     if match:
                         failing_doc = match.group(1)
                         error_logger.error(f"code: {return_code}, document: {failing_doc}, message: Unable to retrieve document"
-                                                           f", skipping current document and re-executing , command: `{command}`")
+                                                           f", skipping current document and re-executing , command: `{full_command}`")
                         doc_names = doc_names[doc_names.index(failing_doc) + 1:]
                     else:
                         error_logger.error(f"code: {return_code}, message: Could not identify failing document"
-                                                           f", skipping remaining documents in this command, command: `{command}`")
+                                                           f", skipping remaining documents in this command, command: `{full_command}`")
                         break
                 elif "ARS1168E Unable to determine Storage Node" in stderr:
-                    error_logger.error(f"code: {return_code}, message: Unable to determine Storage Node"
-                                                       f", skipping remaining documents in this command, command: `{command}`")
+                    match = re.search(r"-n (\d+-\d+)", stderr)
+                    storage_node = ", storage node: " + match.group(1) if match else ""
+                    error_logger.error(f"code: {return_code}{storage_node}, message: Unable to determine Storage Node"
+                                                       f", skipping remaining documents in this command, command: `{full_command}`")
                     break
                 elif "ARS1110E The application group" in stderr:
                     error_logger.error(f"code: {return_code}, message: The Application Group (or permission) doesn't exist"
-                                       f", skipping remaining documents in this command, command: `{command}`")
+                                       f", skipping remaining documents in this command, command: `{full_command}`")
                     break
                 else:
                     error_logger.error(f"code: {return_code}, message: {stderr}"
-                                       f", skipping remaining documents in this command, command: `{command}`")
+                                       f", skipping remaining documents in this command, command: `{full_command}`")
                     break
             else:
                 logger.info("Command executed successfully")
@@ -99,8 +101,8 @@ def main():
     execute_arsadmin_commands(
         './out/arsadmin_commands.txt',
         './out/execution_state',
-        './out/arsadmin_execution.log',
-        './out/arsadmin_execution_err.log',
+        'arsadmin_execution.log',
+        'arsadmin_execution_err.log',
     )
 
 
