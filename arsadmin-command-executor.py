@@ -4,10 +4,10 @@ import shutil
 import re
 from logging_config import setup_logging
 
-def execute_arsadmin_commands(command_file, state_file, log_file, min_free_space_percent=10):
+def execute_arsadmin_commands(command_file, state_file, log_file, err_log_file,min_free_space_percent=10):
     logger, error_logger = setup_logging(
-        "db2_metadata_retrieval_and_command_generation.log",
-        "db2_metadata_retrieval_and_command_generation_error.log"
+        log_file,
+        err_log_file
     )
 
     def get_free_space_percent():
@@ -22,7 +22,7 @@ def execute_arsadmin_commands(command_file, state_file, log_file, min_free_space
         return base_command, doc_names, output_dir
 
     def execute_command(command):
-        logger.info(f"Executing command: `{command}` ...")
+        logger.info(f"Executing command: `{command}`")
         process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         stdout, stderr = process.communicate()
         return process.returncode, stdout, stderr
@@ -63,23 +63,28 @@ def execute_arsadmin_commands(command_file, state_file, log_file, min_free_space
             return_code, stdout, stderr = execute_command(full_command)
 
             if return_code != 0:
-                error_message = f"code: {return_code}, message: {stderr}"
-
                 if "ARS1159E Unable to retrieve the object" in stderr:
                     match = re.search(r"Unable to retrieve the object (\S+)", stderr)
                     if match:
                         failing_doc = match.group(1)
-                        error_logger.error(error_message + f",failed document: {failing_doc}, command: {base_command} {failing_doc}")
-
+                        error_logger.error(f"code: {return_code}, document: {failing_doc}, message: Unable to retrieve document"
+                                                           f", skipping current document and re-executing , command: `{command}`")
                         doc_names = doc_names[doc_names.index(failing_doc) + 1:]
                     else:
-                        error_logger.error(error_message + "Could not identify failing document. Skipping remaining documents in this command.")
+                        error_logger.error(f"code: {return_code}, message: Could not identify failing document"
+                                                           f", skipping remaining documents in this command, command: `{command}`")
                         break
-                elif "ARS1168E Unable to determine Storage Node" in stderr or "ARS1110E The application group" in stderr:
-                    error_logger.error(error_message + f", command: `{command}`")
+                elif "ARS1168E Unable to determine Storage Node" in stderr:
+                    error_logger.error(f"code: {return_code}, message: Unable to determine Storage Node"
+                                                       f", skipping remaining documents in this command, command: `{command}`")
+                    break
+                elif "ARS1110E The application group" in stderr:
+                    error_logger.error(f"code: {return_code}, message: The Application Group (or permission) doesn't exist"
+                                       f", skipping remaining documents in this command, command: `{command}`")
                     break
                 else:
-                    error_logger.error(error_message + f"Unknown error. Skipping remaining documents in this command.")
+                    error_logger.error(f"code: {return_code}, message: {stderr}"
+                                       f", skipping remaining documents in this command, command: `{command}`")
                     break
             else:
                 logger.info("Command executed successfully")
@@ -93,9 +98,9 @@ def execute_arsadmin_commands(command_file, state_file, log_file, min_free_space
 def main():
     execute_arsadmin_commands(
         './out/arsadmin_commands.txt',
-        './out/execution_state.txt',
+        './out/execution_state',
         './out/arsadmin_execution.log',
-        './out/arsadmin_error.log'
+        './out/arsadmin_execution_err.log',
     )
 
 
