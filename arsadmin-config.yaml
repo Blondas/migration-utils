@@ -1,9 +1,0 @@
-# ArsAdmin Command Executor Configuration
-
-command_file: './out/arsadmin_commands.txt'
-state_file: './out/execution_state.json'
-log_file: 'command_executor.log'
-err_log_file: 'command_executor.error_log'
-min_free_space_percent: 10.0
-max_workers: 8
-save_interval: 60  # seconds

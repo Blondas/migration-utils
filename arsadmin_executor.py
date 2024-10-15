@@ -5,11 +5,11 @@ import re
 from dataclasses import dataclass
 from typing import List, Set, Optional, Tuple
 import aiofiles
-import yaml
+import json
 import logging
 from logging_config import setup_logging
 from collections import deque
-
+import argparse
 
 @dataclass
 class Config:
@@ -72,27 +72,22 @@ class StateManager:
 
     async def save_state(self) -> None:
         async with self.state.state_lock:
+            state_data = {
+                "pending": list(self.state.pending),
+                "in_progress": list(self.state.in_progress),
+                "completed": list(self.state.completed)
+            }
             async with aiofiles.open(self.state_file, 'w') as f:
-                await f.write(yaml.dump({
-                    "pending": list(self.state.pending),
-                    "in_progress": list(self.state.in_progress),
-                    "completed": list(self.state.completed)
-                }))
+                await f.write(json.dumps(state_data, indent=2))
 
     async def load_state(self) -> None:
         if os.path.exists(self.state_file):
             async with aiofiles.open(self.state_file, 'r') as f:
-                data = yaml.safe_load(await f.read())
+                data = json.loads(await f.read())
                 async with self.state.state_lock:
                     self.state.pending = deque(data.get("pending", []))
                     self.state.in_progress = set(data.get("in_progress", []))
                     self.state.completed = set(data.get("completed", []))
-
-
-async def load_config(config_file: str) -> Config:
-    async with aiofiles.open(config_file, 'r') as f:
-        config_data = yaml.safe_load(await f.read())
-    return Config(**config_data)
 
 
 async def get_free_space_percent() -> float:
@@ -219,7 +214,26 @@ async def execute_arsadmin_commands(config: Config) -> None:
 
 
 async def main() -> None:
-    config = await load_config('arsadmin-config.yaml')
+    parser = argparse.ArgumentParser(description='ArsAdmin Command Executor')
+    parser.add_argument('--command_file', default='./out/arsadmin_commands.txt', help='Path to the command file')
+    parser.add_argument('--state_file', default='./out/execution_state.json', help='Path to the state file')
+    parser.add_argument('--log_file', default='command_executor.log', help='Path to the log file')
+    parser.add_argument('--err_log_file', default='command_executor.error_log', help='Path to the error log file')
+    parser.add_argument('--min_free_space_percent', type=float, default=10.0, help='Minimum free space percentage')
+    parser.add_argument('--max_workers', type=int, default=8, help='Maximum number of worker tasks')
+    parser.add_argument('--save_interval', type=int, default=60, help='State save interval in seconds')
+
+    args = parser.parse_args()
+
+    config = Config(
+        command_file=args.command_file,
+        state_file=args.state_file,
+        log_file=args.log_file,
+        err_log_file=args.err_log_file,
+        min_free_space_percent=args.min_free_space_percent,
+        max_workers=args.max_workers,
+        save_interval=args.save_interval
+    )
     await execute_arsadmin_commands(config)
 
 
