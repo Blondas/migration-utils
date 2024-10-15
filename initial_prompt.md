@@ -79,13 +79,12 @@ OK. This was PART 1 of the script. We will go back to it later. Now let's focus 
 3. If there is less than given % of free space on disk (default 10%) do not execute next commands - finish after running the current command.
 
 ----------------------------------------------------------------------------------
-Write me a function wchich
-PART 2:
-10. When the arsadmin fails due to data corruption, not available etc. the rest of the requested objects are not fulfilled. hence it is required to "check" the ret code, if nonzero it should be logged for further investigation and the arsadmin retrieve command should be rerun starting from the next not corrupted document 
-11. the arsadmin retireve commands should run in separate threads - number configurable, by default 8
-12. In case the script is stopped, it should be able to resume it from where it finished
-13. support performance testing, i.e. how fast all together threads download 10gb of data, depends on with  how many threads it is running: 2, 4, 8, 12, 16, threads. Log the result to the file. ideally this should be loosely coupled with the main script
-14. If there is less then a given % of free space on disk, do not start the next threads - only allow those running to finish their job. log the information.
-
-arsadmin retrieve -I LAZARI4 -u {USER} -g {AGNAME} -n {PRI_NID}-{SEC_NID} -d ./out/data/{AGID_NAME}/ {DOC_NAME}
- 
+write me a script which will trigger the `command_executor_multithreading.py`. the idea is as follows:
+* trigger script for given number of threads, i.e [1,2 3,4 5]
+* before each run delete:
+  * delete ./out/data directory
+  * delete state file
+* count time until the size of ./out/data directory reach given size (default 5GB)
+* append runtime to the performance_test.log file (use the setup_logging). entry contains: no of threads,  size, time
+* stop the script
+* the idea is to evaluate with which number of threads the script run fastest
