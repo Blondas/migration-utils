@@ -141,8 +141,8 @@ def save_tables_metadata_to_sql(conn, results, tables_metadata_dir, logger):
 
 def main():
     logger, error_logger = setup_logging(
-        "db2_metadata_retrieval_and_command_generation.log",
-        "db2_metadata_retrieval_and_command_generation_error.log"
+        "command_generation.log",
+        "command_generation.error_log"
     )
     start_time = datetime.now()
 
@@ -166,7 +166,7 @@ def main():
         save_tables_metadata_to_sql(conn, results, tables_metadata_dir, logger)
 
         # Generate commands
-        command_file = './out/arsadmin_retrieve.txt'
+        command_file = './out/arsadmin_commands.txt'
         command_count = generate_commands(documents_file, tables_metadata_dir, command_file)
         logger.info(f"Generated {command_count} arsadmin retrieve commands in {command_file}")
 

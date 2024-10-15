@@ -5,11 +5,11 @@ import re
 import concurrent.futures
 from logging_config import setup_logging
 from queue import Queue
-from threading import Lock
+from threading import Lock, current_thread
 import json
 
 def execute_arsadmin_commands(command_file, state_file, log_file, err_log_file, min_free_space_percent=10, max_threads=8):
-    logger, error_logger = setup_logging(log_file, err_log_file)
+    logger, error_logger = setup_logging(log_file, err_log_file, include_thread_name=True)
     state_lock = Lock()
     command_queue = Queue()
 
@@ -31,7 +31,9 @@ def execute_arsadmin_commands(command_file, state_file, log_file, err_log_file, 
         return process.returncode, stdout, stderr
 
     def save_state(state):
+        logger.info("save_state() before lock")
         with state_lock:
+            logger.info("save_state() after lock")
             with open(state_file, 'w') as f:
                 json.dump(state, f)
 
@@ -42,9 +44,8 @@ def execute_arsadmin_commands(command_file, state_file, log_file, err_log_file, 
         return {"next_command": 0, "completed_commands": []}
 
     def ensure_directory_exists(directory):
-        if not os.path.exists(directory):
-            os.makedirs(directory)
-            logger.info(f"Created directory: {directory}")
+        os.makedirs(directory, exist_ok=True)
+        logger.info(f"Ensured directory exists: {directory}")
 
     def process_command(command, command_index):
         base_command, doc_names, output_dir = parse_command(command)
@@ -84,8 +85,9 @@ def execute_arsadmin_commands(command_file, state_file, log_file, err_log_file, 
                 logger.info("Command executed successfully")
                 break  # All documents processed successfully
 
-        # Mark command as completed
+        logger.info("process_command() before lock")
         with state_lock:
+            logger.info("process_command() after lock")
             state = load_state()
             if command_index not in state["completed_commands"]:
                 state["completed_commands"].append(command_index)
@@ -111,7 +113,7 @@ def execute_arsadmin_commands(command_file, state_file, log_file, err_log_file, 
         commands = f.readlines()
 
     # Start worker threads
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max_threads) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_threads, thread_name_prefix="Worker") as executor:
         # Start worker threads
         futures = [executor.submit(worker) for _ in range(max_threads)]
 
@@ -140,10 +142,10 @@ def execute_arsadmin_commands(command_file, state_file, log_file, err_log_file, 
 
 def main():
     execute_arsadmin_commands(
-        './out/arsadmin_commands.txt',
-        './out/execution_state.json',
-        'arsadmin_execution.log',
-        'arsadmin_execution_err.log',
+        command_file='./out/arsadmin_commands.txt',
+        state_file='./out/execution_state.json',
+        log_file='command_executor.log',
+        err_log_file='command_executor.error_log',
         max_threads=8
     )
 

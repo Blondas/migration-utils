@@ -4,3 +4,4 @@ venv
 db2_config.py
 out*
 data_retrieval_script.egg-info
+out
