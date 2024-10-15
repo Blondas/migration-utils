@@ -48,7 +48,11 @@ class CommandState:
 
     async def get_next_command(self) -> Optional[int]:
         async with self.state_lock:
-            return self.pending.popleft() if self.pending else None
+            if not self.pending:
+                return None
+            command_index = self.pending.popleft()
+            self.in_progress.add(command_index)
+            return command_index
 
     async def initialize_pending(self, all_commands: List[int]) -> None:
         async with self.state_lock:
@@ -162,7 +166,7 @@ async def process_command(command: Command, logger: logging.Logger, error_logger
                                    f", skipping remaining documents in this command, command: `{full_command}`")
                 return False
         else:
-            logger.info("Command executed successfully")
+            logger.info(f"Command executed successfully, command: `{full_command}`")
             return True
 
     return True
@@ -180,16 +184,10 @@ async def worker(state_manager: StateManager, commands: List[Command], logger: l
             break
 
         command = commands[command_index]
-        await state_manager.state.update_state(command_index, 'in_progress')
 
         try:
-            success = await process_command(command, logger, error_logger)
-            if success:
-                await state_manager.state.update_state(command_index, 'completed')
-            else:
-                # If the command failed, we might want to re-queue it or handle it differently
-                # For now, we'll just log it and move on
-                error_logger.error(f"Command {command_index} failed to execute successfully")
+            await process_command(command, logger, error_logger)
+            await state_manager.state.update_state(command_index, 'completed')
         except Exception as e:
             error_logger.error(f"Unexpected error occurred in command {command_index}: {str(e)}", exc_info=True)
 
