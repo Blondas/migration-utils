@@ -5,12 +5,12 @@ import re
 import concurrent.futures
 from logging_config import setup_logging
 from queue import Queue
-from threading import Lock, current_thread
+from threading import RLock
 import json
 
 def execute_arsadmin_commands(command_file, state_file, log_file, err_log_file, min_free_space_percent=10, max_threads=8):
     logger, error_logger = setup_logging(log_file, err_log_file, include_thread_name=True)
-    state_lock = Lock()
+    state_lock = RLock()
     command_queue = Queue()
 
     def get_free_space_percent():
@@ -31,11 +31,9 @@ def execute_arsadmin_commands(command_file, state_file, log_file, err_log_file, 
         return process.returncode, stdout, stderr
 
     def save_state(state):
-        logger.info("save_state() before lock")
-        with state_lock:
-            logger.info("save_state() after lock")
-            with open(state_file, 'w') as f:
-                json.dump(state, f)
+        logger.info(f"Saving state: `{state}`")
+        with open(state_file, 'w') as f:
+            json.dump(state, f)
 
     def load_state():
         if os.path.exists(state_file):
@@ -85,9 +83,7 @@ def execute_arsadmin_commands(command_file, state_file, log_file, err_log_file, 
                 logger.info("Command executed successfully")
                 break  # All documents processed successfully
 
-        logger.info("process_command() before lock")
         with state_lock:
-            logger.info("process_command() after lock")
             state = load_state()
             if command_index not in state["completed_commands"]:
                 state["completed_commands"].append(command_index)

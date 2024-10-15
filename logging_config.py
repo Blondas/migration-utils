@@ -5,15 +5,15 @@ def setup_logging(log_file, error_log_file, include_thread_name=False):
     log_dir = './out/logs'
     os.makedirs(log_dir, exist_ok=True)
 
-    log_format = '%(asctime)s - %(levelname)s - '
+    logging_format = '%(asctime)s - %(levelname)s - '
     if include_thread_name:
-        log_format += '%(threadName)s - '
-    log_format += '%(message)s'
+        logging_format += '%(threadName)s - '
+    logging_format += '%(message)s'
 
     # Configure logging to console and file
     logging.basicConfig(
         level=logging.INFO,
-        format=log_format,
+        format=logging_format,
         datefmt='%Y-%m-%d %H:%M:%S',
         handlers=[
             logging.StreamHandler(),
