@@ -221,7 +221,7 @@ async def execute_arsadmin_commands(config: Config) -> None:
 
 
 async def main() -> None:
-    config = await load_config('config.yaml')
+    config = await load_config('arsadmin-config.yaml')
     await execute_arsadmin_commands(config)
 
 

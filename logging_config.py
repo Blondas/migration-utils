@@ -6,20 +6,23 @@ def setup_logging(log_file: str, err_log_file: str) -> Tuple[logging.Logger, log
     log_dir = './out/logs'
     os.makedirs(log_dir, exist_ok=True)
 
-    logger = logging.getLogger()
-    error_logger = logging.getLogger()
+    logging_format = '%(asctime)s - %(levelname)s - %(message)s'
 
-    logger.setLevel(logging.INFO)
+    logging.basicConfig(
+        level=logging.INFO,
+        format=logging_format,
+        datefmt='%Y-%m-%d %H:%M:%S',
+        handlers=[
+            logging.StreamHandler(),
+            logging.FileHandler(f'{log_dir}/{log_file}')
+        ]
+    )
+
+    # Set up error logging
+    error_logger = logging.getLogger('error_logger')
     error_logger.setLevel(logging.ERROR)
+    error_handler = logging.FileHandler(f'{log_dir}/{err_log_file}')
+    error_handler.setFormatter(logging.Formatter(logging_format))
+    error_logger.addHandler(error_handler)
 
-    file_handler = logging.FileHandler(f'{log_dir}/{log_file}')
-    error_file_handler = logging.FileHandler(f'{log_dir}/{err_log_file}')
-
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    file_handler.setFormatter(formatter)
-    error_file_handler.setFormatter(formatter)
-
-    logger.addHandler(file_handler)
-    error_logger.addHandler(error_file_handler)
-
-    return logger, error_logger
+    return logging.getLogger(__name__), error_logger
