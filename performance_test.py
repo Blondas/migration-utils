@@ -27,8 +27,8 @@ async def run_performance_test(max_workers, target_size_gb=5, command_file='./ou
     config = Config(
         command_file=command_file,
         state_file='./out/execution_state.json',
-        log_file='performance_test.log',
-        err_log_file='performance_test_error.log',
+        log_file='command_executor.log',
+        err_log_file='command_executor.error.log',
         min_free_space_percent=10.0,
         max_workers=max_workers,
         save_interval=60
@@ -68,7 +68,7 @@ async def main():
 
     for workers in worker_counts:
         runtime = await run_performance_test(workers, target_size_gb)
-        logger.info(f"{workers},{target_size_gb},{runtime:.2f}")
+        logger.info(f"workers: {workers}, test data size: {target_size_gb} GB, runtime: {runtime:.2f}")
 
     logger.info("Performance testing completed.")
 

@@ -97,7 +97,7 @@ async def get_free_space_percent() -> float:
 
 async def ensure_directory_exists(directory: str, logger: logging.Logger) -> None:
     os.makedirs(directory, exist_ok=True)
-    logger.info(f"Ensured directory exists: {directory}")
+    # logger.info(f"Ensured directory exists: {directory}")
 
 
 async def periodic_save(state_manager: StateManager, interval: int) -> None:
@@ -116,7 +116,7 @@ async def parse_command(command: str) -> Command:
 
 
 async def execute_command(command: str, logger: logging.Logger) -> Tuple[int, str, str]:
-    logger.info(f"Executing command: `{command}`")
+    # logger.info(f"Executing command: `{command}`")
     proc = await asyncio.create_subprocess_shell(
         command,
         stdout=asyncio.subprocess.PIPE,
