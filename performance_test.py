@@ -2,12 +2,30 @@ import os
 import shutil
 import time
 import asyncio
-from statistics import mean
-
 import psutil
-
+from statistics import mean
 from arsadmin_executor import execute_arsadmin_commands, Config, setup_logger
 
+class PerformanceMetrics:
+    def __init__(self):
+        self.cpu_wait = []
+        self.paging_space = []
+        self.page_in = []
+        self.page_out = []
+
+    def add_metrics(self, metrics):
+        self.cpu_wait.append(metrics['cpu_wait'])
+        self.paging_space.append(metrics['paging_space'])
+        self.page_in.append(metrics['page_in'])
+        self.page_out.append(metrics['page_out'])
+
+    def get_averages(self):
+        return {
+            'cpu_wait': mean(self.cpu_wait),
+            'paging_space': mean(self.paging_space),
+            'page_in': mean(self.page_in),
+            'page_out': mean(self.page_out)
+        }
 
 async def get_directory_size(path):
     total_size = 0
@@ -16,7 +34,6 @@ async def get_directory_size(path):
             fp = os.path.join(dirpath, f)
             total_size += os.path.getsize(fp)
     return total_size
-
 
 async def remove_directory_with_retry(path, executor_logger, max_retries=5, delay=1):
     executor_logger.info(f"Attempting to remove directory: {path}")
@@ -38,7 +55,6 @@ async def remove_directory_with_retry(path, executor_logger, max_retries=5, dela
                 raise
             await asyncio.sleep(delay)
 
-
 async def get_performance_metrics():
     cpu_times = psutil.cpu_times()
     swap = psutil.swap_memory()
@@ -50,27 +66,18 @@ async def get_performance_metrics():
         'page_out': psutil.disk_io_counters().write_count
     }
 
-async def log_performance_metrics(performance_logger, interval=2):
-    metrics_history = {
-        'cpu_wait': [],
-        'paging_space': [],
-        'page_in': [],
-        'page_out': []
-    }
+async def collect_performance_metrics(interval=2):
+    metrics = PerformanceMetrics()
+    try:
+        while True:
+            current_metrics = await get_performance_metrics()
+            metrics.add_metrics(current_metrics)
+            await asyncio.sleep(interval)
+    except asyncio.CancelledError:
+        # Task was cancelled, return collected metrics
+        return metrics
 
-    while True:
-        metrics = await get_performance_metrics()
-        for key, value in metrics.items():
-            metrics_history[key].append(value)
-
-        avg_metrics = {key: mean(values) for key, values in metrics_history.items()}
-
-        performance_logger.info(f"Current metrics: {metrics}")
-        performance_logger.info(f"Average metrics: {avg_metrics}")
-
-        await asyncio.sleep(interval)
-
-async def run_performance_test(config, target_size_gb, executor_logger, performance_logger):
+async def run_performance_test(config, target_size_gb, executor_logger):
     target_size_bytes = target_size_gb * 1024 * 1024 * 1024
 
     try:
@@ -80,13 +87,13 @@ async def run_performance_test(config, target_size_gb, executor_logger, performa
             os.remove(config.state_file)
     except Exception as e:
         executor_logger.error(f"Failed to clean up directories: {e}")
-        return None
+        return None, None
 
     start_time = time.time()
 
     try:
         executor_task = asyncio.create_task(execute_arsadmin_commands(config, executor_logger))
-        metrics_task = asyncio.create_task(log_performance_metrics(performance_logger))
+        metrics_task = asyncio.create_task(collect_performance_metrics())
 
         while True:
             if not os.path.exists('./out/data'):
@@ -104,23 +111,25 @@ async def run_performance_test(config, target_size_gb, executor_logger, performa
 
         executor_task.cancel()
         metrics_task.cancel()
+
         try:
-            await asyncio.gather(executor_task, metrics_task, return_exceptions=True)
+            await executor_task
         except asyncio.CancelledError:
             pass
 
-        return runtime
+        metrics = await metrics_task  # This will now return the collected metrics
+
+        return runtime, metrics
     except Exception as e:
         executor_logger.error(f"Error during performance test: {e}")
-        return None
+        return None, None
 
 async def main():
     performance_logger = setup_logger('performance_test', './out/log/performance_test.log')
     executor_logger = setup_logger('command_executor', './out/log/command_executor.log')
-    metrics_logger = setup_logger('performance_metrics', './out/log/performance_metrics.log')
 
     worker_counts = [1, 2]
-    target_size_gb = 1
+    target_size_gb = 5
 
     for workers in worker_counts:
         config = Config(
@@ -130,9 +139,20 @@ async def main():
             max_workers=workers,
             save_interval=60
         )
-        runtime = await run_performance_test(config, target_size_gb, executor_logger, metrics_logger)
-        if runtime is not None:
-            performance_logger.info(f"workers: {workers}, test data size: {target_size_gb} GB, runtime: {runtime:.2f}")
+        runtime, metrics = await run_performance_test(config, target_size_gb, executor_logger)
+        if runtime is not None and metrics is not None:
+            averages = metrics.get_averages()
+            log_entry = (
+                f"workers number: {workers}, data size: {target_size_gb}GB, runtime: {runtime:.2f}, \n"
+                f" - cpu wait average: {averages['cpu_wait']:.2f}%, \n"
+                f" - page in average: {averages['page_in']:.2f}, \n"
+                f" - page out average: {averages['page_out']:.2f}, \n"
+                f" - paging space 2s_current: {metrics.paging_space}, \n"
+                f" - cpu wait 2s_current: {metrics.cpu_wait}, \n"
+                f" - page in 2s_current: {metrics.page_in}, \n"
+                f" - page out 2s_current: {metrics.page_out}"
+            )
+            performance_logger.info(log_entry)
         else:
             performance_logger.error(f"Performance test failed for {workers} workers")
 
