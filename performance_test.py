@@ -82,7 +82,7 @@ async def get_performance_metrics():
         'page_out': psutil.disk_io_counters().write_count
     }
 
-async def collect_performance_metrics(interval=2):
+async def collect_performance_metrics(interval=5):
     metrics = PerformanceMetrics()
     try:
         while True:
@@ -163,10 +163,10 @@ async def main():
                 f" - cpu wait average: {averages['cpu_wait']:.2f}%, \n"
                 f" - page in average: {averages['page_in']:.2f}, \n"
                 f" - page out average: {averages['page_out']:.2f}, \n"
-                f" - paging space 2s_current: {metrics.paging_space}, \n"
-                f" - cpu wait 2s_current: {metrics.cpu_wait}, \n"
-                f" - page in 2s_current: {metrics.page_in}, \n"
-                f" - page out 2s_current: {metrics.page_out}"
+                f" - paging space 5s_current: {metrics.paging_space}, \n"
+                f" - cpu wait 5s_current: {metrics.cpu_wait}, \n"
+                f" - page in 5s_current: {metrics.page_in}, \n"
+                f" - page out 5s_current: {metrics.page_out}"
             )
             performance_logger.info(log_entry)
         else:
