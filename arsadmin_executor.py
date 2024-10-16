@@ -182,7 +182,7 @@ async def process_command(command: Command, logger: logging.Logger) -> bool:
                                    f", skipping remaining documents in this command, command: `{full_command}`")
                 return False
         else:
-            logger.info(f"Command executed successfully, command: `{full_command}`")
+            # logger.info(f"Command executed successfully, command: `{full_command}`")
             return True
 
     return True
