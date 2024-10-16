@@ -35,7 +35,7 @@ async def get_directory_size(path):
             total_size += os.path.getsize(fp)
     return total_size
 
-async def remove_directory_with_retry(path, executor_logger, max_retries=5, delay=1):
+async def remove_directory_with_retry(path, executor_logger, max_retries=10, delay=3):
     executor_logger.info(f"Attempting to remove directory: {path}")
     executor_logger.info(f"Directory exists before removal attempt: {os.path.exists(path)}")
 
@@ -55,12 +55,28 @@ async def remove_directory_with_retry(path, executor_logger, max_retries=5, dela
                 raise
             await asyncio.sleep(delay)
 
+def calculate_cpu_iowait_percent():
+    # First measurement
+    cpu_times_1 = psutil.cpu_times()
+    time.sleep(1)  # Wait for 1 second
+    # Second measurement
+    cpu_times_2 = psutil.cpu_times()
+
+    # Calculate differences
+    iowait_diff = cpu_times_2.iowait - cpu_times_1.iowait
+    total_diff = sum(cpu_times_2) - sum(cpu_times_1)
+
+    # Calculate percentage
+    iowait_percent = (iowait_diff / total_diff) * 100 if total_diff > 0 else 0
+
+    return iowait_percent
+
 async def get_performance_metrics():
-    cpu_times = psutil.cpu_times()
+    cpu_iowait = calculate_cpu_iowait_percent()
     swap = psutil.swap_memory()
 
     return {
-        'cpu_wait': cpu_times.iowait,
+        'cpu_wait': cpu_iowait,
         'paging_space': swap.used,
         'page_in': psutil.disk_io_counters().read_count,
         'page_out': psutil.disk_io_counters().write_count
