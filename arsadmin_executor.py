@@ -6,17 +6,14 @@ from dataclasses import dataclass
 from typing import List, Set, Optional, Tuple
 import aiofiles
 import json
-import logging
-from logging_config import setup_logging
 from collections import deque
 import argparse
+import logging
 
 @dataclass
 class Config:
     command_file: str
     state_file: str
-    log_file: str
-    err_log_file: str
     min_free_space_percent: float
     max_workers: int
     save_interval: int
@@ -90,6 +87,30 @@ class StateManager:
                     self.state.completed = set(data.get("completed", []))
 
 
+def setup_logger(name, log_file, level=logging.INFO):
+    log_dir = os.path.dirname(log_file)
+    if log_dir and not os.path.exists(log_dir):
+        os.makedirs(log_dir)
+
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+    file_handler = logging.FileHandler(log_file)
+    file_handler.setFormatter(formatter)
+
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(formatter)
+    logger = logging.getLogger(name)
+    logger.setLevel(level)
+    logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
+
+    return logger
+
+# Usage
+logger = setup_logger('my_logger', 'app.log')
+logger.info('This is a log message')
+
+
 async def get_free_space_percent() -> float:
     total, used, free = shutil.disk_usage("/")
     return (free / total) * 100
@@ -126,7 +147,7 @@ async def execute_command(command: str, logger: logging.Logger) -> Tuple[int, st
     return proc.returncode, stdout.decode(), stderr.decode()
 
 
-async def process_command(command: Command, logger: logging.Logger, error_logger: logging.Logger) -> bool:
+async def process_command(command: Command, logger: logging.Logger) -> bool:
     await ensure_directory_exists(command.output_dir, logger)
 
     while command.doc_names:
@@ -138,26 +159,26 @@ async def process_command(command: Command, logger: logging.Logger, error_logger
                 match = re.search(r"Unable to retrieve the object >(\S+)<", stderr)
                 if match:
                     failing_doc = match.group(1)
-                    error_logger.error(
+                    logger.error(
                         f"code: {return_code}, document: {failing_doc}, message: Unable to retrieve document"
                         f", skipping current document and re-executing , command: `{full_command}`")
                     command.doc_names = command.doc_names[command.doc_names.index(failing_doc) + 1:]
                 else:
-                    error_logger.error(f"code: {return_code}, message: Could not identify failing document"
+                    logger.error(f"code: {return_code}, message: Could not identify failing document"
                                        f", skipping remaining documents in this command, command: `{full_command}`")
                     return False
             elif "ARS1168E Unable to determine Storage Node" in stderr:
                 match = re.search(r"-n (\d+-\d+)", full_command)
                 storage_node = ", storage node: " + match.group(1) if match else ""
-                error_logger.error(f"code: {return_code}{storage_node}, message: Unable to determine Storage Node"
+                logger.error(f"code: {return_code}{storage_node}, message: Unable to determine Storage Node"
                                    f", skipping remaining documents in this command, command: `{full_command}`")
                 return False
             elif "ARS1110E The application group" in stderr:
-                error_logger.error(f"code: {return_code}, message: The Application Group (or permission) doesn't exist"
+                logger.error(f"code: {return_code}, message: The Application Group (or permission) doesn't exist"
                                    f", skipping remaining documents in this command, command: `{full_command}`")
                 return False
             else:
-                error_logger.error(f"code: {return_code}, message: {stderr}"
+                logger.error(f"code: {return_code}, message: {stderr}"
                                    f", skipping remaining documents in this command, command: `{full_command}`")
                 return False
         else:
@@ -167,8 +188,7 @@ async def process_command(command: Command, logger: logging.Logger, error_logger
     return True
 
 
-async def worker(state_manager: StateManager, commands: List[Command], logger: logging.Logger,
-                 error_logger: logging.Logger, min_free_space_percent: float) -> None:
+async def worker(state_manager: StateManager, commands: List[Command], logger: logging.Logger, min_free_space_percent: float) -> None:
     while True:
         if await get_free_space_percent() < min_free_space_percent:
             logger.warning(f"Free disk space below {min_free_space_percent}%. Stopping execution.")
@@ -181,15 +201,13 @@ async def worker(state_manager: StateManager, commands: List[Command], logger: l
         command = commands[command_index]
 
         try:
-            await process_command(command, logger, error_logger)
+            await process_command(command, logger)
             await state_manager.state.update_state(command_index, 'completed')
         except Exception as e:
-            error_logger.error(f"Unexpected error occurred in command {command_index}: {str(e)}", exc_info=True)
+            logger.error(f"Unexpected error occurred in command {command_index}: {str(e)}", exc_info=True)
 
 
-async def execute_arsadmin_commands(config: Config) -> None:
-    logger, error_logger = setup_logging(config.log_file, config.err_log_file)
-
+async def execute_arsadmin_commands(config: Config, logger: logging.Logger) -> None:
     state_manager = StateManager(config.state_file)
     await state_manager.load_state()
 
@@ -201,7 +219,7 @@ async def execute_arsadmin_commands(config: Config) -> None:
 
     await state_manager.state.initialize_pending(range(len(commands)))
 
-    workers = [asyncio.create_task(worker(state_manager, commands, logger, error_logger, config.min_free_space_percent))
+    workers = [asyncio.create_task(worker(state_manager, commands, logger, config.min_free_space_percent))
                for _ in range(config.max_workers)]
 
     save_task = asyncio.create_task(periodic_save(state_manager, config.save_interval))
@@ -217,24 +235,23 @@ async def main() -> None:
     parser = argparse.ArgumentParser(description='ArsAdmin Command Executor')
     parser.add_argument('--command_file', default='./out/arsadmin_commands.txt', help='Path to the command file')
     parser.add_argument('--state_file', default='./out/execution_state.json', help='Path to the state file')
-    parser.add_argument('--log_file', default='command_executor.log', help='Path to the log file')
-    parser.add_argument('--err_log_file', default='command_executor.error_log', help='Path to the error log file')
+    parser.add_argument('--log_file', default='./out/log/command_executor.log', help='Path to the log file')
     parser.add_argument('--min_free_space_percent', type=float, default=10.0, help='Minimum free space percentage')
     parser.add_argument('--max_workers', type=int, default=8, help='Maximum number of worker tasks')
     parser.add_argument('--save_interval', type=int, default=60, help='State save interval in seconds')
-
     args = parser.parse_args()
 
     config = Config(
         command_file=args.command_file,
         state_file=args.state_file,
-        log_file=args.log_file,
-        err_log_file=args.err_log_file,
         min_free_space_percent=args.min_free_space_percent,
         max_workers=args.max_workers,
         save_interval=args.save_interval
     )
-    await execute_arsadmin_commands(config)
+
+    logger = setup_logger("arsadmin_executor", args.log_file, logging.INFO)
+
+    await execute_arsadmin_commands(config, logger)
 
 
 if __name__ == "__main__":

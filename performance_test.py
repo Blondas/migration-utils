@@ -2,9 +2,7 @@ import os
 import shutil
 import time
 import asyncio
-import psutil
-from logging_config import setup_logging
-from arsadmin_executor import execute_arsadmin_commands, Config
+from arsadmin_executor import execute_arsadmin_commands, Config, setup_logger
 
 
 async def get_directory_size(path):
@@ -16,27 +14,17 @@ async def get_directory_size(path):
     return total_size
 
 
-async def run_performance_test(max_workers, target_size_gb=5, command_file='./out/arsadmin_commands.txt'):
+async def run_performance_test(config, target_size_gb, logger):
     target_size_bytes = target_size_gb * 1024 * 1024 * 1024
 
     if os.path.exists('./out/data'):
         shutil.rmtree('./out/data')
-    if os.path.exists('./out/execution_state.json'):
-        os.remove('./out/execution_state.json')
-
-    config = Config(
-        command_file=command_file,
-        state_file='./out/execution_state.json',
-        log_file='command_executor.log',
-        err_log_file='command_executor.error.log',
-        min_free_space_percent=10.0,
-        max_workers=max_workers,
-        save_interval=60
-    )
+    if os.path.exists(config.state_file):
+        os.remove(config.state_file)
 
     start_time = time.time()
 
-    executor_task = asyncio.create_task(execute_arsadmin_commands(config))
+    executor_task = asyncio.create_task(execute_arsadmin_commands(config, logger))
 
     while True:
         if not os.path.exists('./out/data'):
@@ -62,15 +50,26 @@ async def run_performance_test(max_workers, target_size_gb=5, command_file='./ou
 
 
 async def main():
-    logger, _ = setup_logging('performance_test.log', 'performance_test_error.log')
+    performance_logger = setup_logger('performance_test', './out/log/performance_test.log')
+    executor_logger = setup_logger('command_executor', './out/log/command_executor.log')
+
     worker_counts = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
     target_size_gb = 5
 
-    for workers in worker_counts:
-        runtime = await run_performance_test(workers, target_size_gb)
-        logger.info(f"workers: {workers}, test data size: {target_size_gb} GB, runtime: {runtime:.2f}")
+    base_config = Config(
+        command_file='./out/arsadmin_commands.txt',
+        state_file='./out/execution_state.json',
+        min_free_space_percent=10.0,
+        max_workers=1,  # This will be overridden in the loop
+        save_interval=60
+    )
 
-    logger.info("Performance testing completed.")
+    for workers in worker_counts:
+        config = base_config._replace(max_workers=workers)
+        runtime = await run_performance_test(config, target_size_gb, executor_logger)
+        performance_logger.info(f"workers: {workers}, test data size: {target_size_gb} GB, runtime: {runtime:.2f}")
+
+    performance_logger.info("Performance testing completed.")
 
 
 if __name__ == "__main__":
