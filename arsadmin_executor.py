@@ -112,7 +112,7 @@ logger.info('This is a log message')
 
 
 async def get_free_space_percent() -> float:
-    total, used, free = shutil.disk_usage("/")
+    total, used, free = shutil.disk_usage("/odlahd")
     return (free / total) * 100
 
 
