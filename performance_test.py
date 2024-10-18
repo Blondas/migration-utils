@@ -93,7 +93,7 @@ async def collect_performance_metrics(interval=5):
         # Task was cancelled, return collected metrics
         return metrics
 
-async def run_performance_test(config, target_size_gb, executor_logger):
+async def run_performance_test(config, target_size_gb, sampling_rate, executor_logger):
     target_size_bytes = target_size_gb * 1024 * 1024 * 1024
 
     try:
@@ -109,7 +109,7 @@ async def run_performance_test(config, target_size_gb, executor_logger):
 
     try:
         executor_task = asyncio.create_task(execute_arsadmin_commands(config, executor_logger))
-        metrics_task = asyncio.create_task(collect_performance_metrics())
+        metrics_task = asyncio.create_task(collect_performance_metrics(sampling_rate))
 
         while True:
             if not os.path.exists('./out/data'):
@@ -144,18 +144,26 @@ async def main():
     performance_logger = setup_logger('performance_test', './out/log/performance_test.log')
     executor_logger = setup_logger('command_executor', './out/log/command_executor.log')
 
-    worker_counts = [1, 2]
-    target_size_gb = 5
+    # Define pairs of (worker_count, target_size_gb)
+    test_configurations = [
+        (1, 5),
+        (2, 10),
+        (4, 15),
+        (8, 20)
+    ]
 
-    for workers in worker_counts:
+    # log sampling rate [s]
+    sampling_rate = 5
+
+    for workers, target_size_gb in worker_counts:
         config = Config(
             command_file='./out/arsadmin_commands.txt',
             state_file='./out/execution_state.json',
             min_free_space_percent=10.0,
             max_workers=workers,
-            save_interval=60
+            save_interval=30
         )
-        runtime, metrics = await run_performance_test(config, target_size_gb, executor_logger)
+        runtime, metrics = await run_performance_test(config, target_size_gb, sampling_rate, executor_logger)
         if runtime is not None and metrics is not None:
             averages = metrics.get_averages()
             log_entry = (
@@ -163,10 +171,10 @@ async def main():
                 f" - cpu wait average: {averages['cpu_wait']:.2f}%, \n"
                 f" - page in average: {averages['page_in']:.2f}, \n"
                 f" - page out average: {averages['page_out']:.2f}, \n"
-                f" - paging space 5s_current: {metrics.paging_space}, \n"
-                f" - cpu wait 5s_current: {metrics.cpu_wait}, \n"
-                f" - page in 5s_current: {metrics.page_in}, \n"
-                f" - page out 5s_current: {metrics.page_out}"
+                f" - paging space {sampling_rate}s_current: {metrics.paging_space}, \n"
+                f" - cpu wait {sampling_rate}s_current: {metrics.cpu_wait}, \n"
+                f" - page in {sampling_rate}s_current: {metrics.page_in}, \n"
+                f" - page out {sampling_rate}s_current: {metrics.page_out}"
             )
             performance_logger.info(log_entry)
         else:
