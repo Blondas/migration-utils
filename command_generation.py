@@ -3,7 +3,7 @@ import csv
 import os
 from datetime import datetime
 from db2_config import DB2_CONFIG
-from logging_config import setup_logging
+from arsadmin_executor import setup_logger
 
 # Database connection function
 def connect_to_db():
@@ -140,10 +140,7 @@ def save_tables_metadata_to_sql(conn, results, tables_metadata_dir, logger):
     logger.info(f"Total metadata rows fetched: {total_metadata_rows}")
 
 def main():
-    logger, error_logger = setup_logging(
-        "command_generation.log",
-        "command_generation.error_log"
-    )
+    performance_logger = setup_logger('command_generation', './out/log/command_generation.log')
     start_time = datetime.now()
 
     try:
