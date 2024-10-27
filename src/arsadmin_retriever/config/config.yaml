@@ -1,0 +1,19 @@
+commands: ./out/arsadmin_commands.txt
+
+db_config:
+  database: ${DB2_DATABASE:-database_name}
+  hostname: ${DB2_HOSTNAME:-hostname}
+  port: ${DB2_PORT:-port}
+  username: ${DB2_USERNAME:-username}
+  password: ${DB2_PASSWORD:-password}
+
+generator_config:
+  tables_metadata_dir: ./out/sql/tables
+  agid_name_subfoler_size: 1000
+
+executor_config:
+  data_dir: ./out/data
+  state: .out/execution_state.json
+  state_save_interval: 30
+  min_free_space_percent: 10
+  workers: 8

@@ -88,3 +88,19 @@ write me a script which will trigger the `command_executor_multithreading.py`. t
 * append runtime to the performance_test.log file (use the setup_logging). entry contains: no of threads,  size, time
 * stop the script
 * the idea is to evaluate with which number of threads the script run fastest
+
+- load id and time
+
+
+another way:
+- go to the storage
+
+- get list of tapes and object of tapes on correct sequence
+- extract this information to put 
+
+- working by application group is ok
+- look in the load id, 
+- retrieving 
+- questions to answer
+  - how do i know that i don't pull the resource files multiple files
+  - 

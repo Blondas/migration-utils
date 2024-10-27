@@ -1,0 +1,86 @@
+# Logging configuration for the arsadmin_retriever application
+version: 1
+disable_existing_loggers: false
+
+# Define the formatters
+formatters:
+  standard:
+    # Standard format includes timestamp, logger name, log level, and message
+    format: '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+  statistics:
+    # Statistics format only includes timestamp and message
+    format: '%(asctime)s - %(message)s'
+
+# Define the handlers
+handlers:
+  # Handler for console output
+  console:
+    class: logging.StreamHandler
+    level: INFO
+    formatter: standard
+    stream: ext://sys.stdout
+
+  # Handler for command generation log file
+  command_generation_file:
+    class: logging.FileHandler
+    level: INFO
+    formatter: standard
+    filename: ./out/logs/command_generation.log
+    encoding: utf8
+
+  # Handler for command execution log file
+  command_execution_file:
+    class: logging.FileHandler
+    level: INFO
+    formatter: standard
+    filename: ./out/logs/command_execution.log
+    encoding: utf8
+
+  # Handler for command execution error log file
+  command_execution_error_file:
+    class: logging.FileHandler
+    level: ERROR
+    formatter: standard
+    filename: ./out/logs/command_execution.error_log
+    encoding: utf8
+
+  # Handler for performance test log file
+  performance_test_file:
+    class: logging.FileHandler
+    level: DEBUG
+    formatter: standard
+    filename: ./out/logs/performance_test.log
+    encoding: utf8
+
+  # Handler for performance test statistics log file
+  performance_test_stats_file:
+    class: logging.FileHandler
+    level: DEBUG
+    formatter: statistics
+    filename: ./out/logs/performance_test.stats_log
+    encoding: utf8
+
+# Define the loggers
+loggers:
+  command_generation:
+    # Logger for command generation module
+    level: DEBUG
+    handlers: [console, command_generation_file]
+    propagate: no
+
+  command_execution:
+    # Logger for command execution module
+    level: DEBUG
+    handlers: [console, command_execution_file, command_execution_error_file]
+    propagate: no
+
+  performance_test:
+    # Logger for performance test module
+    level: DEBUG
+    handlers: [console, performance_test_file, performance_test_stats_file]
+    propagate: no
+
+# Root logger
+root:
+  level: INFO
+  handlers: [console]
