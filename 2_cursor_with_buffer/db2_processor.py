@@ -234,43 +234,108 @@ class TapeCommandsBuilder:
         return command_batches
 
 
+# class DB2Connection:
+#     def __init__(self, conn_string: str, for_updates: bool = False) -> None:
+#         self.conn_string: str = conn_string
+#         self.for_updates: bool = for_updates
+#
+#     @contextmanager
+#     def get_cursor(self) -> Iterator[ibm_db_dbi.Cursor]:
+#         conn: ibm_db_dbi.Connection = ibm_db_dbi.connect(self.conn_string)
+#         try:
+#             logger.debug("trying get cursor")
+#             cursor: ibm_db_dbi.Cursor = conn.cursor()
+#             logger.debug("cursor opened")
+#
+#             if self.for_updates:
+#                 logger.debug("updating cursor for_updated")
+#                 cursor.execute("SET CURRENT ISOLATION = CS")
+#                 cursor.execute("SET CURRENT LOCK TIMEOUT = 30")
+#                 logger.debug("updating cursor finished")
+#             else:
+#                 logger.debug("updating cursor NOT for_updated")
+#                 cursor.execute("SET CURRENT ISOLATION = UR")
+#                 cursor.execute("SET CURRENT QUERY OPTIMIZATION = 5")
+#                 cursor.execute("SET CURRENT DEGREE = 'ANY'")
+#                 logger.debug("updating cursor finished")
+#
+#             yield cursor
+#
+#             if self.for_updates:
+#                 conn.commit()
+#         except Exception as e:
+#             if self.for_updates:
+#                 logger.debug("error: " + str(e))
+#                 conn.rollback()
+#             raise e
+#         finally:
+#             logger.debug("closing cursor")
+#             conn.close()
+
+
 class DB2Connection:
     def __init__(self, conn_string: str, for_updates: bool = False) -> None:
         self.conn_string: str = conn_string
         self.for_updates: bool = for_updates
+        logger.debug(f"Initializing DB2Connection with for_updates={for_updates}")
+        logger.debug(f"Connection string: {self.conn_string}")
 
     @contextmanager
     def get_cursor(self) -> Iterator[ibm_db_dbi.Cursor]:
-        conn: ibm_db_dbi.Connection = ibm_db_dbi.connect(self.conn_string)
+        logger.debug("Attempting to establish database connection")
         try:
-            logger.debug("trying get cursor")
+            conn: ibm_db_dbi.Connection = ibm_db_dbi.connect(self.conn_string)
+            logger.debug("Database connection established successfully")
+        except Exception as e:
+            logger.error(f"Failed to establish database connection: {str(e)}")
+            raise
+
+        try:
+            logger.debug("Attempting to create cursor")
             cursor: ibm_db_dbi.Cursor = conn.cursor()
-            logger.debug("cursor opened")
+            logger.debug("Cursor created successfully")
 
             if self.for_updates:
-                logger.debug("updating cursor for_updated")
-                cursor.execute("SET CURRENT ISOLATION = CS")
-                cursor.execute("SET CURRENT LOCK TIMEOUT = 30")
-                logger.debug("updating cursor finished")
+                logger.debug("Setting isolation level CS for updates")
+                try:
+                    cursor.execute("SET CURRENT ISOLATION = CS")
+                    cursor.execute("SET CURRENT LOCK TIMEOUT = 30")
+                    logger.debug("Update cursor settings applied successfully")
+                except Exception as e:
+                    logger.error(f"Failed to set update cursor settings: {str(e)}")
+                    raise
             else:
-                logger.debug("updating cursor NOT for_updated")
-                cursor.execute("SET CURRENT ISOLATION = UR")
-                cursor.execute("SET CURRENT QUERY OPTIMIZATION = 5")
-                cursor.execute("SET CURRENT DEGREE = 'ANY'")
-                logger.debug("updating cursor finishedd")
+                logger.debug("Setting read-only cursor settings")
+                try:
+                    cursor.execute("SET CURRENT ISOLATION = UR")
+                    cursor.execute("SET CURRENT QUERY OPTIMIZATION = 5")
+                    cursor.execute("SET CURRENT DEGREE = 'ANY'")
+                    logger.debug("Read-only cursor settings applied successfully")
+                except Exception as e:
+                    logger.error(f"Failed to set read-only cursor settings: {str(e)}")
+                    raise
 
             yield cursor
 
             if self.for_updates:
+                logger.debug("Committing transaction")
                 conn.commit()
+                logger.debug("Transaction committed successfully")
+
         except Exception as e:
             if self.for_updates:
-                logger.debug("error: " + str(e))
+                logger.error(f"Error during cursor operation, rolling back: {str(e)}")
                 conn.rollback()
-            raise e
+            else:
+                logger.error(f"Error during cursor operation: {str(e)}")
+            raise
         finally:
-            logger.debug("closing cursor")
-            conn.close()
+            logger.debug("Closing database connection")
+            try:
+                conn.close()
+                logger.debug("Database connection closed successfully")
+            except Exception as e:
+                logger.error(f"Error closing database connection: {str(e)}")
 
 
 class StatusUpdateManager:
@@ -698,13 +763,13 @@ class DB2DataProcessor:
 
         # Start consumers
         consumers = []
-        # for i in range(self.num_consumers):
-        #     consumer = threading.Thread(
-        #         target=self.consumer,
-        #         name=f'consumer-{i}'
-        #     )
-        #     consumer.start()
-        #     consumers.append(consumer)
+        for i in range(self.num_consumers):
+            consumer = threading.Thread(
+                target=self.consumer,
+                name=f'consumer-{i}'
+            )
+            consumer.start()
+            consumers.append(consumer)
 
         # Wait for completion
         producer_thread.join()
