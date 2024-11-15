@@ -488,6 +488,7 @@ class DB2DataProcessor:
             self,
             read_db: DB2Connection,
             status_update_manager: StatusUpdateManager,
+            table_name: str,
             metrics: ProcessingMetrics,
             command_batch_builder: TapeCommandsBuilder,
             command_processor: CommandProcessor,
@@ -497,6 +498,7 @@ class DB2DataProcessor:
     ) -> None:
         self.read_db = read_db
         self.status_update_manager = status_update_manager
+        self.table_name = table_name
         self.metrics = metrics
         self.command_batch_builder = command_batch_builder
         self.command_processor = command_processor
@@ -537,7 +539,7 @@ class DB2DataProcessor:
             f"{len(rows)} records, {len(tape_commands)} commands"
         )
 
-    def producer(self, table_name: str) -> None:
+    def producer(self) -> None:
         try:
             with self.read_db.get_cursor() as cursor:
                 query: str = f"""
@@ -552,7 +554,7 @@ class DB2DataProcessor:
                         STATUS,
                         DTSTAMP
                     FROM 
-                        {table_name}
+                        {self.table_name}
                     WHERE 
                         STATUS = '{ProcessingStatus.NOTSTARTED.value}'
                     ORDER BY 
@@ -720,14 +722,14 @@ def load_config(config_path: Optional[str] = None) -> Config:
         schema=yaml_config['database']['schema'],
 
         # Consumer
-        read_batch_size=yaml_config['consumer']['read_batch_size'],
-        num_consumers=yaml_config['consumer']['num_consumers'],
-        consumers_queue_size=yaml_config['consumer']['consumers_queue_size'],
+        read_batch_size=yaml_config['producer_consumer']['read_batch_size'],
+        num_consumers=yaml_config['producer_consumer']['num_consumers'],
+        consumers_queue_size=yaml_config['producer_consumer']['consumers_queue_size'],
 
         # Updater
-        update_batch_size=yaml_config['updater']['update_batch_size'],
-        update_queue_size=yaml_config['updater']['update_queue_size'],
-        update_interval_seconds=yaml_config['updater']['update_interval_seconds'],
+        update_batch_size=yaml_config['db_updater']['update_batch_size'],
+        update_queue_size=yaml_config['db_updater']['update_queue_size'],
+        update_interval_seconds=yaml_config['db_updater']['update_interval_seconds'],
 
         # Arsadmin
         command_max_objects=yaml_config['arsadmin']['command_max_objects'],
@@ -767,6 +769,7 @@ def main() -> None:
     processor = DB2DataProcessor(
         read_db = read_db,
         status_update_manager = status_update_manager,
+        table_name = config.table_name,
         metrics = metrics,
         command_batch_builder = tape_batch_builder,
         command_processor = command_processor,
