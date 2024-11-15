@@ -15,7 +15,7 @@ import re
 import subprocess
 import yaml
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 
@@ -243,15 +243,21 @@ class DB2Connection:
     def get_cursor(self) -> Iterator[ibm_db_dbi.Cursor]:
         conn: ibm_db_dbi.Connection = ibm_db_dbi.connect(self.conn_string)
         try:
+            logger.debug("trying get cursor")
             cursor: ibm_db_dbi.Cursor = conn.cursor()
+            logger.debug("cursor opened")
 
             if self.for_updates:
+                logger.debug("updating cursor for_updated")
                 cursor.execute("SET CURRENT ISOLATION = CS")
                 cursor.execute("SET CURRENT LOCK TIMEOUT = 30")
+                logger.debug("updating cursor finished")
             else:
+                logger.debug("updating cursor NOT for_updated")
                 cursor.execute("SET CURRENT ISOLATION = UR")
                 cursor.execute("SET CURRENT QUERY OPTIMIZATION = 5")
                 cursor.execute("SET CURRENT DEGREE = 'ANY'")
+                logger.debug("updating cursor finishedd")
 
             yield cursor
 
@@ -259,9 +265,11 @@ class DB2Connection:
                 conn.commit()
         except Exception as e:
             if self.for_updates:
+                logger.debug("error: " + str(e))
                 conn.rollback()
             raise e
         finally:
+            logger.debug("closing cursor")
             conn.close()
 
 
@@ -682,7 +690,7 @@ class DB2DataProcessor:
 
     def run(self):
         self.metrics.start_time = datetime.now()
-        logger.info(f"Starting processing with {self.num_consumers} consumers")
+        logger.info(f"1 Starting processing with {self.num_consumers} consumers")
 
         # Start producer
         producer_thread = threading.Thread(target=self.producer)
@@ -690,18 +698,18 @@ class DB2DataProcessor:
 
         # Start consumers
         consumers = []
-        for i in range(self.num_consumers):
-            consumer = threading.Thread(
-                target=self.consumer,
-                name=f'consumer-{i}'
-            )
-            consumer.start()
-            consumers.append(consumer)
+        # for i in range(self.num_consumers):
+        #     consumer = threading.Thread(
+        #         target=self.consumer,
+        #         name=f'consumer-{i}'
+        #     )
+        #     consumer.start()
+        #     consumers.append(consumer)
 
         # Wait for completion
         producer_thread.join()
         for consumer in consumers:
-            consumer.join()
+            consumer.join(30)
 
         if self.shutdown_event.is_set():
             raise RuntimeError("Processing failed - check logs for details")
