@@ -171,6 +171,7 @@ class TapeCommandsBuilder:
         self,
         rows: List[DBRow]
     ) -> List[Command]:
+        logger.debug(f"build_tape_commands, Building tape commands for {len(rows)} rows")
         """
         Creates TapeCommandBatch objects from rows of a single tape_id.
         Expects rows to be sorted by: agname, prinid, odcreats
@@ -512,6 +513,7 @@ class DB2DataProcessor:
             self,
             rows: List[DBRow]
     ) -> None:
+        logger.debug("_produce method called")
         """Process a complete group of rows with the same tape_id"""
         if not rows:
             return
@@ -540,6 +542,7 @@ class DB2DataProcessor:
         )
 
     def producer(self) -> None:
+        logger.debug("producer thread started")
         try:
             with self.read_db.get_cursor() as cursor:
                 query: str = f"""
@@ -594,7 +597,9 @@ class DB2DataProcessor:
                     if self.shutdown_event.is_set():
                         break
 
+                    logger.debug("producer, before rows fetched")
                     rows = cursor.fetchmany(self.db_read_batch_size)
+                    logger.debug("producer, rows fetched")
                     if not rows:
                         # Process any remaining buffered rows
                         if buffer:
@@ -627,6 +632,7 @@ class DB2DataProcessor:
                 self.queue.put(None)
 
     def consumer(self) -> None:
+        logger.info("consumer started")
         while not self.shutdown_event.is_set():
             try:
                 tape_commands: Optional[List[Command]] = self.queue.get()
@@ -745,7 +751,8 @@ def load_config(config_path: Optional[str] = None) -> Config:
 def main() -> None:
     config: Config = load_config()
 
-    conn_string: str = f'DATABASE={config.database};HOSTNAME={config.hostname};PORT={config.port};PROTOCOL={config.protocol};UID={config.db_user};PWD={config.db_password};'
+    # conn_string: str = f'DATABASE={config.database};HOSTNAME={config.hostname};PORT={config.port};PROTOCOL={config.protocol};UID={config.db_user};PWD={config.db_password};'
+    conn_string: str = f'DATABASE={config.database};'
 
     read_db: DB2Connection = DB2Connection(conn_string, for_updates=False)
     update_db: DB2Connection = DB2Connection(conn_string, for_updates=True)
