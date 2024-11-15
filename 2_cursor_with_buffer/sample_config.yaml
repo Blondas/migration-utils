@@ -1,0 +1,31 @@
+# Database configuration
+database:
+  database: "MY_DB"
+  hostname: "db2host.example.com"
+  port: 50000
+  protocol: "TCPIP"
+  db_user: "db2user"
+  db_password: "db2password"
+  schema: "MYSCHEMA"
+
+# Producer, Consumer threads configuration
+producer_consumer:
+  read_batch_size: 50000
+  num_consumers: 8
+  consumers_queue_size: 16  # 2 * num_consumers
+
+# Database updater configuration
+db_updater:
+  update_batch_size: 1000
+  update_queue_size: 100
+  update_interval_seconds: 5
+
+# ArsAdmin command configuration
+arsadmin:
+  command_max_objects: 1000
+  dir_max_elems: 32000
+  user: "arsuser"
+  password: null  # Optional, can be null/omitted
+  od_inst: "od_instance_name"
+  base_dir: "/path/to/base/directory"
+  table_name: "MIG3_AGID_NAME_1"

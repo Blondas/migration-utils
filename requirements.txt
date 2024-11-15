@@ -3,3 +3,5 @@ psutil==5.9.0
 
 aiofiles~=24.1.0
 PyYAML~=6.0.2
+pyodbc~=5.2.0
+ibm-db~=3.2.3
