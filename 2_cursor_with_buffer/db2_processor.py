@@ -6,7 +6,7 @@ from queue import Queue, Empty
 from typing import List, Dict, Optional, Tuple, Iterator, Set, NamedTuple
 from contextlib import contextmanager
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from enum import Enum
 import os
@@ -331,7 +331,8 @@ class StatusUpdateManager:
             table_name: str,
             batch_size: int,
             queue_size: int,
-            update_interval_seconds: int
+            update_interval_seconds: int,
+            update_status: bool
     ) -> None:
         self.db = db
         self.table_name = table_name
@@ -340,6 +341,7 @@ class StatusUpdateManager:
         self.update_interval_seconds: int = update_interval_seconds
         self.shutdown_event: threading.Event = threading.Event()
         self.update_thread: Optional[threading.Thread] = None
+        self.update_status: bool = update_status
 
     def start(self) -> None:
         self.update_thread = threading.Thread(
@@ -406,24 +408,25 @@ class StatusUpdateManager:
             updates_by_status[update.status].update(update.ids)
 
         try:
-            with self.db.get_cursor() as cursor:
-                for status, ids in updates_by_status.items():
-                    for i in range(0, len(ids), self.batch_size):
-                        batch = list(ids)[i:i + self.batch_size]
-                        id_values: str = ",".join(str(idx) for idx in batch)
+            if self.update_status:
+                with self.db.get_cursor() as cursor:
+                    for status, ids in updates_by_status.items():
+                        for i in range(0, len(ids), self.batch_size):
+                            batch = list(ids)[i:i + self.batch_size]
+                            id_values: str = ",".join(str(idx) for idx in batch)
 
-                        base_sql = f"""
-                        UPDATE {self.table_name}
-                        SET STATUS = ?, 
-                        DTSTAMP = CURRENT TIMESTAMP
-                        WHERE ID IN ({id_values})
-                        """
-                        cursor.execute(base_sql, (status.value,))
+                            base_sql = f"""
+                            UPDATE {self.table_name}
+                            SET STATUS = ?, 
+                            DTSTAMP = CURRENT TIMESTAMP
+                            WHERE ID IN ({id_values})
+                            """
+                            cursor.execute(base_sql, (status.value,))
 
-            # logger.info(
-            #     f"Updated status for {sum(len(b.ids) for b in updates)} "
-            #     f"records across {len(updates)} batches"
-            # )
+                # logger.info(
+                #     f"Updated status for {sum(len(b.ids) for b in updates)} "
+                #     f"records across {len(updates)} batches"
+                # )
         except Exception as e:
             logger.error(
                 f"Status update failed, error: {e}"
@@ -809,7 +812,10 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(description='Arsadmin Retrieve Command Executor')
     parser.add_argument('--table_name', help='Table name to drive payload migration', required=True)
+    parser.add_argument('--update_status', help='Enable/disable status updates in DB', type=bool, default=True)
     args = parser.parse_args()
+
+    logger.info(f"Running with settings: {yaml.dump(asdict(config), sort_keys=False,)}")
 
     read_db: DB2Connection = DB2Connection(config.database, for_updates=False)
     update_db: DB2Connection = DB2Connection(config.database, for_updates=True)
@@ -828,7 +834,8 @@ def main() -> None:
         table_name= args.table_name,
         batch_size = config.update_batch_size,
         queue_size= config.update_queue_size,
-        update_interval_seconds = config.update_interval_seconds
+        update_interval_seconds = config.update_interval_seconds,
+        update_status = args.update_status
     )
     command_processor = CommandProcessor()
     processor = DB2DataProcessor(
