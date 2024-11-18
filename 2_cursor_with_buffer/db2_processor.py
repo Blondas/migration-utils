@@ -113,6 +113,7 @@ class MetricsMonitor:
 
     def start(self) -> None:
         """Start the metrics monitoring thread"""
+        logger.info("Starting metrics monitoring thread...")
         self._monitor_thread = threading.Thread(
             target=self._monitor_loop,
             name='metrics_monitor'
@@ -740,7 +741,8 @@ class DB2DataProcessor:
                 self.queue.task_done()
 
     def run(self):
-        logger.info(f"Starting processing with {self.num_consumers} consumers, ")
+        # Start metrics monitor
+        self.metrics_monitor.start()
 
         # Start producer
         producer_thread = threading.Thread(target=self.producer)
@@ -756,13 +758,16 @@ class DB2DataProcessor:
             consumer.start()
             consumers.append(consumer)
 
-        # Wait for completion
-        producer_thread.join()
-        for consumer in consumers:
-            consumer.join(30)
+        try:
+            producer_thread.join()
+            for consumer in consumers:
+                consumer.join()
 
-        if self.shutdown_event.is_set():
-            raise RuntimeError("Processing failed - check logs for details")
+            if self.shutdown_event.is_set():
+                raise RuntimeError("Processing failed - check logs for details")
+
+        finally:
+            self.metrics_monitor.stop()
 
 
 def load_config(config_path: Optional[str] = None) -> Config:
