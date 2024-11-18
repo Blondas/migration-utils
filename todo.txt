@@ -1,7 +1,0 @@
-- sprawdzic jak wyglada updatowanie statusu - dlaczego sie nie zmienil?
-- poprawic logi:
-    - err
-    - info - dodac
-    - debug - dodac
-- sprawdzic zapisywanie plikow do podfolderow
-- zrobic monitorowanie, zeby wypluwalo metryki
