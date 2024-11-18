@@ -14,6 +14,7 @@ import logging
 import re
 import subprocess
 import yaml
+import argparse
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -23,12 +24,6 @@ logger = logging.getLogger(__name__)
 class Config:
     # Database
     database: str
-    hostname: str
-    port: int
-    protocol: str
-    db_user: str
-    db_password: str
-    schema: str
 
     # Producer Consumer setup
     read_batch_size: int
@@ -47,19 +42,6 @@ class Config:
     password: Optional[str]
     od_inst: str
     base_dir: str
-    table_name: str
-
-    @property
-    def connection_string(self) -> str:
-        return (
-            f"DATABASE={self.database};"
-            f"HOSTNAME={self.hostname};"
-            f"PORT={self.port};"
-            f"PROTOCOL={self.protocol};"
-            f"UID={self.db_user};"
-            f"PWD={self.db_password};"
-        )
-
 
 @dataclass
 class ProcessingMetrics:
@@ -163,8 +145,8 @@ class TapeCommandsBuilder:
         return os.path.abspath(os.path.join(
             self._dir_prefix,
             agid_name,
-            str((self._current_batch_no // self.dir_max_elems) + 1),
-            str(command_subdir)
+            "batch_" + str((self._current_batch_no // self.dir_max_elems) + 1),
+            "command_" + str(command_subdir)
         ))
 
     def build_tape_commands(
@@ -234,58 +216,17 @@ class TapeCommandsBuilder:
         return command_batches
 
 
-# class DB2Connection:
-#     def __init__(self, conn_string: str, for_updates: bool = False) -> None:
-#         self.conn_string: str = conn_string
-#         self.for_updates: bool = for_updates
-#
-#     @contextmanager
-#     def get_cursor(self) -> Iterator[ibm_db_dbi.Cursor]:
-#         conn: ibm_db_dbi.Connection = ibm_db_dbi.connect(self.conn_string)
-#         try:
-#             logger.debug("trying get cursor")
-#             cursor: ibm_db_dbi.Cursor = conn.cursor()
-#             logger.debug("cursor opened")
-#
-#             if self.for_updates:
-#                 logger.debug("updating cursor for_updated")
-#                 cursor.execute("SET CURRENT ISOLATION = CS")
-#                 cursor.execute("SET CURRENT LOCK TIMEOUT = 30")
-#                 logger.debug("updating cursor finished")
-#             else:
-#                 logger.debug("updating cursor NOT for_updated")
-#                 cursor.execute("SET CURRENT ISOLATION = UR")
-#                 cursor.execute("SET CURRENT QUERY OPTIMIZATION = 5")
-#                 cursor.execute("SET CURRENT DEGREE = 'ANY'")
-#                 logger.debug("updating cursor finished")
-#
-#             yield cursor
-#
-#             if self.for_updates:
-#                 conn.commit()
-#         except Exception as e:
-#             if self.for_updates:
-#                 logger.debug("error: " + str(e))
-#                 conn.rollback()
-#             raise e
-#         finally:
-#             logger.debug("closing cursor")
-#             conn.close()
-
-
 class DB2Connection:
-    def __init__(self, conn_string: str, for_updates: bool = False) -> None:
-        self.conn_string: str = conn_string
+    def __init__(self, database: str, for_updates: bool = False) -> None:
+        self.database: str = database
+        self.user: str = ''
+        self.password: str = ''
         self.for_updates: bool = for_updates
-        logger.debug(f"Initializing DB2Connection with for_updates={for_updates}")
-        logger.debug(f"Connection string: {self.conn_string}")
 
     @contextmanager
     def get_cursor(self) -> Iterator[ibm_db_dbi.Cursor]:
-        logger.debug("Attempting to establish database connection")
         try:
-            conn: ibm_db_dbi.Connection = ibm_db_dbi.connect(self.conn_string)
-            logger.debug("Database connection established successfully")
+            conn: ibm_db_dbi.Connection = ibm_db_dbi.connect(self.database, self.user, self.password)
         except Exception as e:
             logger.error(f"Failed to establish database connection: {str(e)}")
             raise
@@ -793,12 +734,6 @@ def load_config(config_path: Optional[str] = None) -> Config:
     return Config(
         # Database
         database=yaml_config['database']['database'],
-        hostname=yaml_config['database']['hostname'],
-        port=yaml_config['database']['port'],
-        protocol=yaml_config['database']['protocol'],
-        db_user=yaml_config['database']['db_user'],
-        db_password=yaml_config['database']['db_password'],
-        schema=yaml_config['database']['schema'],
 
         # Consumer
         read_batch_size=yaml_config['producer_consumer']['read_batch_size'],
@@ -816,31 +751,33 @@ def load_config(config_path: Optional[str] = None) -> Config:
         user=yaml_config['arsadmin']['user'],
         password=yaml_config['arsadmin'].get('password'),  # Optional
         od_inst=yaml_config['arsadmin']['od_inst'],
-        base_dir=yaml_config['arsadmin']['base_dir'],
-        table_name=yaml_config['arsadmin']['table_name']
+        base_dir=yaml_config['arsadmin']['base_dir']
     )
 
 
 def main() -> None:
     config: Config = load_config()
 
-    # conn_string: str = f'DATABASE={config.database};HOSTNAME={config.hostname};PORT={config.port};PROTOCOL={config.protocol};UID={config.db_user};PWD={config.db_password};'
-    conn_string: str = f'DATABASE={config.database};'
+    parser = argparse.ArgumentParser(description='Arsadmin Retrieve Command Executor')
+    parser.add_argument('--table_name', help='Table name to drive payload migration', required=True)
+    args = parser.parse_args()
 
-    read_db: DB2Connection = DB2Connection(conn_string, for_updates=False)
-    update_db: DB2Connection = DB2Connection(conn_string, for_updates=True)
+    read_db: DB2Connection = DB2Connection(config.database, for_updates=False)
+    update_db: DB2Connection = DB2Connection(config.database, for_updates=True)
     metrics: ProcessingMetrics = ProcessingMetrics()
+
+    base_dir: str = f'{config.base_dir}/{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}'
     tape_batch_builder: TapeCommandsBuilder = TapeCommandsBuilder(
         command_max_objects = config.command_max_objects,
         dir_max_elems = config.dir_max_elems,
         user = config.user,
         password = config.password,
         od_inst = config.od_inst,
-        base_dir= config.base_dir,
+        base_dir= base_dir,
     )
     status_update_manager: StatusUpdateManager = StatusUpdateManager(
         db = update_db,
-        table_name= config.table_name,
+        table_name= args.table_name,
         batch_size = config.update_batch_size,
         queue_size= config.update_queue_size,
         update_interval_seconds = config.update_interval_seconds
@@ -849,7 +786,7 @@ def main() -> None:
     processor = DB2DataProcessor(
         read_db = read_db,
         status_update_manager = status_update_manager,
-        table_name = config.table_name,
+        table_name = args.table_name,
         metrics = metrics,
         command_batch_builder = tape_batch_builder,
         command_processor = command_processor,

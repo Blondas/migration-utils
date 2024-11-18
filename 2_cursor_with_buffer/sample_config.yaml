@@ -1,12 +1,5 @@
 # Database configuration
-database:
-  database: "MY_DB"
-  hostname: "db2host.example.com"
-  port: 50000
-  protocol: "TCPIP"
-  db_user: "db2user"
-  db_password: "db2password"
-  schema: "MYSCHEMA"
+database: "MY_DB"
 
 # Producer, Consumer threads configuration
 producer_consumer:
@@ -28,4 +21,3 @@ arsadmin:
   password: null  # Optional, can be null/omitted
   od_inst: "od_instance_name"
   base_dir: "/path/to/base/directory"
-  table_name: "MIG3_AGID_NAME_1"
