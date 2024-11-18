@@ -6,7 +6,7 @@ from queue import Queue, Empty
 from typing import List, Dict, Optional, Tuple, Iterator, Set, NamedTuple
 from contextlib import contextmanager
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 import os
@@ -16,7 +16,7 @@ import subprocess
 import yaml
 import argparse
 
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -42,25 +42,6 @@ class Config:
     password: Optional[str]
     od_inst: str
     base_dir: str
-
-@dataclass
-class ProcessingMetrics:
-    batches_produced: int = 0
-    batches_processed: int = 0
-    rows_processed: int = 0
-    start_time: Optional[datetime] = None
-
-    def log_metrics(self) -> None:
-        if not self.start_time:
-            return
-
-        duration: float = (datetime.now() - self.start_time).total_seconds()
-        logger.info(
-            f"Processed {self.rows_processed:,} rows in {duration:.2f}s "
-            f"({self.rows_processed / duration:.0f} rows/s). "
-            f"Batches: produced={self.batches_produced:,}, "
-            f"processed={self.batches_processed:,}"
-        )
 
 
 class ProcessingStatus(Enum):
@@ -111,6 +92,69 @@ class CommandResult:
 class StatusUpdate:
     ids: Set[int]
     status: ProcessingStatus
+
+
+@dataclass
+class ProcessingStats:
+    processed_objects: int = 0
+    last_log_time: float = field(default_factory=time.time)
+
+
+class MetricsMonitor:
+    def __init__(
+            self,
+            log_interval: float
+    ) -> None:
+        self._queue: Optional[Queue] = None
+        self.log_interval = log_interval
+        self.stats = ProcessingStats()
+        self._shutdown_event = threading.Event()
+        self._monitor_thread: Optional[threading.Thread] = None
+
+    def start(self) -> None:
+        """Start the metrics monitoring thread"""
+        self._monitor_thread = threading.Thread(
+            target=self._monitor_loop,
+            name='metrics_monitor'
+        )
+        self._monitor_thread.daemon = True  # Thread will exit when main thread exits
+        self._monitor_thread.start()
+
+    def stop(self) -> None:
+        """Stop the metrics monitoring thread"""
+        self._shutdown_event.set()
+        if self._monitor_thread:
+            self._monitor_thread.join(timeout=5.0)
+
+    def increment_processed(self, count: int = 1) -> None:
+        """Increment the processed objects counter"""
+        self.stats.processed_objects += count
+
+    def set_queue(self, queue: Queue) -> None:
+        """Set the queue to monitor"""
+        self._queue = queue
+
+    def _monitor_loop(self) -> None:
+        """Main monitoring loop that periodically logs metrics"""
+        while not self._shutdown_event.is_set():
+            try:
+                current_time = time.time()
+                if current_time - self.stats.last_log_time >= self.log_interval:
+                    self._log_metrics()
+                    self.stats.last_log_time = current_time
+
+                time.sleep(1.0)  # Avoid tight loop
+            except Exception as e:
+                logger.error(f"Error in metrics monitor: {e}")
+                time.sleep(5.0)  # Back off on error
+
+    def _log_metrics(self) -> None:
+        """Log current metrics"""
+        logger.info(
+            f"Processing metrics - "
+            f"Queue size: {self._queue.qsize()}, "
+            f"Total objects processed: {self.stats.processed_objects:,}"
+        )
 
 
 class TapeCommandsBuilder:
@@ -504,9 +548,9 @@ class DB2DataProcessor:
             read_db: DB2Connection,
             status_update_manager: StatusUpdateManager,
             table_name: str,
-            metrics: ProcessingMetrics,
             command_batch_builder: TapeCommandsBuilder,
             command_processor: CommandProcessor,
+            metrics_monitor: MetricsMonitor,
             db_read_batch_size: int,
             num_consumers: int,
             consumers_queue_size: int,
@@ -514,21 +558,21 @@ class DB2DataProcessor:
         self.read_db = read_db
         self.status_update_manager = status_update_manager
         self.table_name = table_name
-        self.metrics = metrics
         self.command_batch_builder = command_batch_builder
         self.command_processor = command_processor
+        self.queue: Queue[Optional[List[Command]]] = Queue(maxsize=consumers_queue_size)
+
+        self.metrics_monitor = metrics_monitor
+        self.metrics_monitor.set_queue(self.queue)
 
         self.db_read_batch_size = db_read_batch_size
         self.num_consumers = num_consumers
-        self.queue: Queue[Optional[List[Command]]] = Queue(maxsize=consumers_queue_size)
         self.shutdown_event: threading.Event = threading.Event()
 
     def _produce(
             self,
             rows: List[DBRow]
     ) -> None:
-        logger.debug("_produce method called")
-        """Process a complete group of rows with the same tape_id"""
         if not rows:
             return
 
@@ -546,14 +590,12 @@ class DB2DataProcessor:
         )
         self.status_update_manager.queue_update(status_update)
 
+        if self.queue.full():
+           logger.warning("Consumer queue is full")
+
         # Queue the tape commands
         self.queue.put(tape_commands)
-        self.metrics.batches_produced += 1
 
-        logger.info(
-            f"Processed tape group for tape_id {rows[0].tape_id}: "
-            f"{len(rows)} records, {len(tape_commands)} commands"
-        )
 
     def producer(self) -> None:
         logger.debug("producer thread started")
@@ -649,6 +691,9 @@ class DB2DataProcessor:
         logger.info("consumer started")
         while not self.shutdown_event.is_set():
             try:
+                if self.queue.empty():
+                    logger.warning("Consumer queue is empty")
+
                 tape_commands: Optional[List[Command]] = self.queue.get()
                 if tape_commands is None:
                     break
@@ -695,8 +740,7 @@ class DB2DataProcessor:
                 self.queue.task_done()
 
     def run(self):
-        self.metrics.start_time = datetime.now()
-        logger.info(f"1 Starting processing with {self.num_consumers} consumers")
+        logger.info(f"Starting processing with {self.num_consumers} consumers, ")
 
         # Start producer
         producer_thread = threading.Thread(target=self.producer)
@@ -719,8 +763,6 @@ class DB2DataProcessor:
 
         if self.shutdown_event.is_set():
             raise RuntimeError("Processing failed - check logs for details")
-
-        self.metrics.log_metrics()
 
 
 def load_config(config_path: Optional[str] = None) -> Config:
@@ -764,7 +806,6 @@ def main() -> None:
 
     read_db: DB2Connection = DB2Connection(config.database, for_updates=False)
     update_db: DB2Connection = DB2Connection(config.database, for_updates=True)
-    metrics: ProcessingMetrics = ProcessingMetrics()
 
     base_dir: str = f'{config.base_dir}/{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}'
     tape_batch_builder: TapeCommandsBuilder = TapeCommandsBuilder(
@@ -787,9 +828,9 @@ def main() -> None:
         read_db = read_db,
         status_update_manager = status_update_manager,
         table_name = args.table_name,
-        metrics = metrics,
         command_batch_builder = tape_batch_builder,
         command_processor = command_processor,
+        metrics_monitor= MetricsMonitor(5),
         db_read_batch_size= config.read_batch_size,
         num_consumers = config.num_consumers,
         consumers_queue_size = config.consumers_queue_size
