@@ -3,7 +3,7 @@ from pathlib import Path
 import ibm_db_dbi
 import threading
 from queue import Queue, Empty
-from typing import List, Dict, Optional, Tuple, Iterator, Set, NamedTuple
+from typing import List, Optional, Tuple, Iterator, Set, NamedTuple
 from contextlib import contextmanager
 import time
 from dataclasses import dataclass, field, asdict
@@ -31,9 +31,7 @@ class Config:
     consumers_queue_size: int
 
     # DB updater setup
-    update_batch_size: int
     update_queue_size: int
-    update_interval_seconds: int
 
     # Arsadmin setup
     command_max_objects: int
@@ -106,6 +104,7 @@ class MetricsMonitor:
             log_interval: float
     ) -> None:
         self._queue: Optional[Queue] = None
+        self._update_queue: Optional[Queue] = None
         self.log_interval = log_interval
         self.stats = ProcessingStats()
         self._shutdown_event = threading.Event()
@@ -131,9 +130,10 @@ class MetricsMonitor:
         """Increment the processed objects counter"""
         self.stats.processed_objects += count
 
-    def set_queue(self, queue: Queue) -> None:
+    def set_queues(self, queue: Queue, update_queue: Queue) -> None:
         """Set the queue to monitor"""
         self._queue = queue
+        self._update_queue = update_queue
 
     def _monitor_loop(self) -> None:
         """Main monitoring loop that periodically logs metrics"""
@@ -154,6 +154,7 @@ class MetricsMonitor:
         logger.info(
             f"Processing metrics - "
             f"Queue size: {self._queue.qsize()}, "
+            f"Update queue size: {self._queue.qsize()}, "
             f"Total objects processed: {self.stats.processed_objects:,}"
         )
 
@@ -324,21 +325,131 @@ class DB2Connection:
                 logger.error(f"Error closing database connection: {str(e)}")
 
 
+# class StatusUpdateManager_old:
+#     def __init__(
+#             self,
+#             db: DB2Connection,
+#             table_name: str,
+#             batch_size: int,
+#             queue_size: int,
+#             update_interval_seconds: int,
+#             update_status: bool
+#     ) -> None:
+#         self.db = db
+#         self.table_name = table_name
+#         self.batch_size: int = batch_size
+#         self.queue: Queue[Optional[StatusUpdate]] = Queue(queue_size)
+#         self.update_interval_seconds: int = update_interval_seconds
+#         self.shutdown_event: threading.Event = threading.Event()
+#         self.update_thread: Optional[threading.Thread] = None
+#         self.update_status: bool = update_status
+#
+#     def start(self) -> None:
+#         self.update_thread = threading.Thread(
+#             target=self._update_status_worker,
+#             name='status_updater'
+#         )
+#         self.update_thread.start()
+#         logger.info("Status update manager started")
+#
+#     def stop(self) -> None:
+#         self.shutdown_event.set()
+#         self.queue.put(None)
+#         if self.update_thread:
+#             self.update_thread.join()
+#         logger.info("Status update manager stopped")
+#
+#     def queue_update(self, status_update: StatusUpdate) -> None:
+#         if self.queue.full():
+#             logger.warning("Update queue is full, consumer waiting.")
+#         self.queue.put(status_update)
+#
+#     def _update_status_worker(self) -> None:
+#         pending_updates: List[StatusUpdate] = []
+#         last_update_time: float = time.time()
+#
+#         while not self.shutdown_event.is_set():
+#             try:
+#                 queue_query_interval_seconds: float = 1.0
+#                 update: Optional[StatusUpdate] = self.queue.get(timeout=queue_query_interval_seconds)
+#                 if update is None:
+#                     break
+#
+#                 pending_updates.append(update)
+#
+#                 if (len(pending_updates) >= self.batch_size or
+#                         time.time() - last_update_time > self.update_interval_seconds):
+#                     self._process_updates(pending_updates)
+#                     pending_updates = []
+#                     last_update_time = time.time()
+#
+#             except Empty:
+#                 if pending_updates:
+#                     self._process_updates(pending_updates)
+#                     pending_updates = []
+#                     last_update_time = time.time()
+#
+#             except Exception as e:
+#                 logger.error(f"Status update worker failed: {e}")
+#                 for pending_update in pending_updates:
+#                     self.queue.put(pending_update)
+#                 time.sleep(1)
+#
+#         if pending_updates:
+#             try:
+#                 self._process_updates(pending_updates)
+#             except Exception as e:
+#                 logger.error(f"Final status update failed: {e}")
+#
+#     def _process_updates(self, updates: List[StatusUpdate]) -> None:
+#         updates_by_status: Dict[ProcessingStatus, Set[int]] = {}
+#         for update in updates:
+#             if update.status not in updates_by_status:
+#                 updates_by_status[update.status] = set()
+#             updates_by_status[update.status].update(update.ids)
+#
+#         try:
+#             if self.update_status:
+#                 logger.info("_process_updates: Updating status in db")
+#                 with self.db.get_cursor() as cursor:
+#                     for status, ids in updates_by_status.items():
+#                         for i in range(0, len(ids), self.batch_size):
+#                             batch = list(ids)[i:i + self.batch_size]
+#                             id_values: str = ",".join(str(idx) for idx in batch)
+#
+#                             base_sql = f"""
+#                             UPDATE {self.table_name}
+#                             SET STATUS = ?,
+#                             DTSTAMP = CURRENT TIMESTAMP
+#                             WHERE ID IN ({id_values})
+#                             """
+#                             cursor.execute(base_sql, (status.value,))
+#
+#                 # logger.info(
+#                 #     f"Updated status for {sum(len(b.ids) for b in updates)} "
+#                 #     f"records across {len(updates)} batches"
+#                 # )
+#
+#             else:
+#                 logger.info("_process_updates: Not updating status in db")
+#         except Exception as e:
+#             logger.error(
+#                 f"Status update failed, error: {e}"
+#             )
+#             raise
+
+
 class StatusUpdateManager:
     def __init__(
             self,
             db: DB2Connection,
             table_name: str,
-            batch_size: int,
             queue_size: int,
-            update_interval_seconds: int,
             update_status: bool
     ) -> None:
         self.db = db
         self.table_name = table_name
-        self.batch_size: int = batch_size
         self.queue: Queue[Optional[StatusUpdate]] = Queue(queue_size)
-        self.update_interval_seconds: int = update_interval_seconds
         self.shutdown_event: threading.Event = threading.Event()
         self.update_thread: Optional[threading.Thread] = None
         self.update_status: bool = update_status
@@ -364,77 +475,39 @@ class StatusUpdateManager:
         self.queue.put(status_update)
 
     def _update_status_worker(self) -> None:
-        pending_updates: List[StatusUpdate] = []
-        last_update_time: float = time.time()
-
         while not self.shutdown_event.is_set():
             try:
-                queue_query_interval_seconds: float = 1.0
-                update: Optional[StatusUpdate] = self.queue.get(timeout=queue_query_interval_seconds)
+                update: Optional[StatusUpdate] = self.queue.get(timeout=1.0)
                 if update is None:
                     break
 
-                pending_updates.append(update)
-
-                if (len(pending_updates) >= self.batch_size or
-                        time.time() - last_update_time > self.update_interval_seconds):
-                    self._process_updates(pending_updates)
-                    pending_updates = []
-                    last_update_time = time.time()
+                self._process_single_update(update)
 
             except Empty:
-                if pending_updates:
-                    self._process_updates(pending_updates)
-                    pending_updates = []
-                    last_update_time = time.time()
+                continue
 
             except Exception as e:
                 logger.error(f"Status update worker failed: {e}")
-                for pending_update in pending_updates:
-                    self.queue.put(pending_update)
                 time.sleep(1)
 
-        if pending_updates:
-            try:
-                self._process_updates(pending_updates)
-            except Exception as e:
-                logger.error(f"Final status update failed: {e}")
-
-    def _process_updates(self, updates: List[StatusUpdate]) -> None:
-        updates_by_status: Dict[ProcessingStatus, Set[int]] = {}
-        for update in updates:
-            if update.status not in updates_by_status:
-                updates_by_status[update.status] = set()
-            updates_by_status[update.status].update(update.ids)
+    def _process_single_update(self, update: StatusUpdate) -> None:
+        if not self.update_status:
+            logger.info("_process_single_update: Not updating status in db")
+            return
 
         try:
-            if self.update_status:
-                logger.info("_process_updates: Updating status in db")
-                with self.db.get_cursor() as cursor:
-                    for status, ids in updates_by_status.items():
-                        for i in range(0, len(ids), self.batch_size):
-                            batch = list(ids)[i:i + self.batch_size]
-                            id_values: str = ",".join(str(idx) for idx in batch)
+            with self.db.get_cursor() as cursor:
+                id_values: str = ",".join(str(idx) for idx in update.ids)
+                sql = f"""
+                        UPDATE {self.table_name}
+                        SET STATUS = ?, 
+                        DTSTAMP = CURRENT TIMESTAMP
+                        WHERE ID IN ({id_values})
+                        """
+                cursor.execute(sql, (update.status.value,))
 
-                            base_sql = f"""
-                            UPDATE {self.table_name}
-                            SET STATUS = ?, 
-                            DTSTAMP = CURRENT TIMESTAMP
-                            WHERE ID IN ({id_values})
-                            """
-                            cursor.execute(base_sql, (status.value,))
-
-                # logger.info(
-                #     f"Updated status for {sum(len(b.ids) for b in updates)} "
-                #     f"records across {len(updates)} batches"
-                # )
-
-            else:
-                logger.info("_process_updates: Not updating status in db")
         except Exception as e:
-            logger.error(
-                f"Status update failed, error: {e}"
-            )
+            logger.error(f"Status update failed for ids {update.ids}, error: {e}", exc_info=True)
             raise
 
 
@@ -573,7 +646,7 @@ class DB2DataProcessor:
         self.queue: Queue[Optional[List[Command]]] = Queue(maxsize=consumers_queue_size)
 
         self.metrics_monitor = metrics_monitor
-        self.metrics_monitor.set_queue(self.queue)
+        self.metrics_monitor.set_queues(self.queue, self.status_update_manager.queue)
 
         self.db_read_batch_size = db_read_batch_size
         self.num_consumers = num_consumers
@@ -798,9 +871,7 @@ def load_config(config_path: Optional[str] = None) -> Config:
         consumers_queue_size=yaml_config['producer_consumer']['consumers_queue_size'],
 
         # Updater
-        update_batch_size=yaml_config['db_updater']['update_batch_size'],
         update_queue_size=yaml_config['db_updater']['update_queue_size'],
-        update_interval_seconds=yaml_config['db_updater']['update_interval_seconds'],
 
         # Arsadmin
         command_max_objects=yaml_config['arsadmin']['command_max_objects'],
@@ -837,9 +908,7 @@ def main() -> None:
     status_update_manager: StatusUpdateManager = StatusUpdateManager(
         db = update_db,
         table_name= args.table_name,
-        batch_size = config.update_batch_size,
         queue_size= config.update_queue_size,
-        update_interval_seconds = config.update_interval_seconds,
         update_status = args.update_status
     )
     command_processor = CommandProcessor()
