@@ -127,7 +127,7 @@ class MetricsMonitor:
         if self._monitor_thread:
             self._monitor_thread.join(timeout=5.0)
 
-    def increment_processed(self, count: int = 1) -> None:
+    def increment_processed(self, count: int) -> None:
         """Increment the processed objects counter"""
         self.stats.processed_objects += count
 
@@ -707,6 +707,7 @@ class DB2DataProcessor:
                 for command in tape_commands:
                     try:
                         command_result: CommandResult = self.command_processor.process_command(command)
+                        self.metrics_monitor.increment_processed(len(command.object_records))
 
                         # Update successful objects
                         if command_result.successful_ids:
@@ -812,7 +813,7 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(description='Arsadmin Retrieve Command Executor')
     parser.add_argument('--table_name', help='Table name to drive payload migration', required=True)
-    parser.add_argument('--update_status', help='Enable/disable status updates in DB', type=bool, default=True)
+    parser.add_argument('--update_status', help='Enable/disable status updates in DB', type=bool, default=False)
     args = parser.parse_args()
 
     logger.info(f"Running with settings: {yaml.dump(asdict(config), sort_keys=False,)}")
