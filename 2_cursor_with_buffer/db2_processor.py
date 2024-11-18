@@ -357,6 +357,8 @@ class StatusUpdateManager:
         logger.info("Status update manager stopped")
 
     def queue_update(self, status_update: StatusUpdate) -> None:
+        if self.queue.full():
+            logger.warning("Update queue is full, consumer waiting.")
         self.queue.put(status_update)
 
     def _update_status_worker(self) -> None:

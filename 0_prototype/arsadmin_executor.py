@@ -233,7 +233,7 @@ async def execute_arsadmin_commands(config: Config, logger: logging.Logger) -> N
 
 async def main() -> None:
     parser = argparse.ArgumentParser(description='ArsAdmin Command Executor')
-    parser.add_argument('--command_file', default='./out/arsadmin_commands.txt', help='Path to the command file')
+    parser.add_argument('--command_file', help='Table name to drive payload')
     parser.add_argument('--state_file', default='./out/execution_state.json', help='Path to the state file')
     parser.add_argument('--log_file', default='./out/log/command_executor.log', help='Path to the log file')
     parser.add_argument('--min_free_space_percent', type=float, default=10.0, help='Minimum free space percentage')
