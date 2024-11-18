@@ -409,6 +409,7 @@ class StatusUpdateManager:
 
         try:
             if self.update_status:
+                logger.info("_process_updates: Updating status in db")
                 with self.db.get_cursor() as cursor:
                     for status, ids in updates_by_status.items():
                         for i in range(0, len(ids), self.batch_size):
@@ -427,6 +428,9 @@ class StatusUpdateManager:
                 #     f"Updated status for {sum(len(b.ids) for b in updates)} "
                 #     f"records across {len(updates)} batches"
                 # )
+
+            else:
+                logger.info("_process_updates: Not updating status in db")
         except Exception as e:
             logger.error(
                 f"Status update failed, error: {e}"
