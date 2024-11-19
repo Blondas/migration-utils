@@ -1,3 +1,4 @@
+import statistics
 from pathlib import Path
 
 import ibm_db_dbi
@@ -7,7 +8,7 @@ from typing import List, Optional, Tuple, Iterator, Set, NamedTuple
 from contextlib import contextmanager
 import time
 from dataclasses import dataclass, field, asdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import Enum
 import os
 import logging
@@ -164,6 +165,115 @@ class MetricsMonitor:
             f"Update queue size: {self._update_queue.qsize()}/{self._update_queue.maxsize}, "
             f"Total objects processed: {self.stats.processed_objects:,}"
         )
+
+
+@dataclass(frozen=True)
+class RuntimeStatistics:
+    runtime_seconds: float
+    total_files: int
+    total_size_bytes: int
+    median_size_bytes: float
+    min_size_bytes: int
+    max_size_bytes: int
+
+    def get_processing_rate(self) -> float:
+        """Calculate files processed per second"""
+        if self.runtime_seconds == 0:
+            return 0.0
+        return self.total_files / self.runtime_seconds
+
+    def get_throughput(self) -> float:
+        """Calculate bytes processed per second"""
+        if self.runtime_seconds == 0:
+            return 0.0
+        return self.total_size_bytes / self.runtime_seconds
+
+    def average_file_size(self) -> float:
+        """Calculate average file size"""
+        if self.total_files == 0:
+            return 0.0
+        return self.total_size_bytes / self.total_files
+
+class RuntimeStatisticsCalculator:
+        """Handles calculation and formatting of processing metrics"""
+
+        def __init__(self, base_dir: str):
+            self.base_dir: str = base_dir
+            self.start_time: float = time.time()
+
+        def calculate_metrics(self) -> RuntimeStatistics:
+            """Calculate all metrics for files in directory tree"""
+            path = Path(self.base_dir)
+            if not path.exists():
+                raise ValueError(f"Directory {self.base_dir} does not exist")
+
+            file_sizes: list[int] = []
+
+            # Walk through all subdirectories
+            for file_path in path.rglob('*'):
+                if file_path.is_file():
+                    file_sizes.append(file_path.stat().st_size)
+
+            if not file_sizes:
+                return RuntimeStatistics(
+                    runtime_seconds=0,
+                    total_files=0,
+                    total_size_bytes=0,
+                    median_size_bytes=0,
+                    min_size_bytes=0,
+                    max_size_bytes=0
+                )
+
+            runtime = time.time() - self.start_time
+
+            return RuntimeStatistics(
+                runtime_seconds=runtime,
+                total_files=len(file_sizes),
+                total_size_bytes=sum(file_sizes),
+                median_size_bytes=statistics.median(file_sizes),
+                min_size_bytes=min(file_sizes),
+                max_size_bytes=max(file_sizes)
+            )
+
+        @staticmethod
+        def format_size(size_bytes: int) -> str:
+            """Format byte size into human-readable format"""
+            for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+                if size_bytes < 1024.0:
+                    return f"{size_bytes:.2f} {unit}"
+                size_bytes /= 1024.0
+            return f"{size_bytes:.2f} PB"
+
+        @staticmethod
+        def format_runtime(seconds: float) -> str:
+            """Format runtime into human-readable format"""
+            delta = timedelta(seconds=seconds)
+            hours = delta.seconds // 3600
+            minutes = (delta.seconds % 3600) // 60
+            seconds = delta.seconds % 60
+
+            return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+        def log_metrics(self, metrics: RuntimeStatistics) -> None:
+            """Log all metrics in a formatted way"""
+            logger.info("-" * 80)
+            logger.info("Processing completed. Final metrics:")
+
+            # Basic metrics
+            logger.info(f"Total runtime: {self.format_runtime(metrics.runtime_seconds)} ({metrics.runtime_seconds:.2f} seconds)")
+            logger.info(f"Total files processed: {metrics.total_files:,}")
+            logger.info(f"Total size: {self.format_size(metrics.total_size_bytes)} ({metrics.total_size_bytes:,} bytes)")
+
+            # Size statistics
+            logger.info(f"Average file size: {self.format_size(int(metrics.average_file_size))} ({int(metrics.average_file_size):,} bytes)")
+            logger.info(f"Median file size: {self.format_size(int(metrics.median_size_bytes))} ({int(metrics.median_size_bytes):,} bytes)")
+            logger.info(f"Smallest file: {self.format_size(metrics.min_size_bytes)} ({metrics.min_size_bytes:,} bytes)")
+            logger.info(f"Largest file: {self.format_size(metrics.max_size_bytes)} ({metrics.max_size_bytes:,} bytes)")
+
+            # Performance metrics
+            logger.info(f"Processing rate: {metrics.get_processing_rate():.2f} files/second")
+            logger.info(f"Throughput: {self.format_size(int(metrics.get_throughput()))}/second")
+            logger.info("-" * 80)
 
 
 class TapeCommandsBuilder:
@@ -917,8 +1027,6 @@ def main() -> None:
     parser.add_argument('--table_name', help='Table name to drive payload migration', required=True)
     args = parser.parse_args()
 
-    exit()
-
     logger.info(f"Running with settings: {yaml.dump(asdict(config), sort_keys=False,)}")
 
     read_db: DB2Connection = DB2Connection(config.database, for_updates=False)
@@ -952,6 +1060,10 @@ def main() -> None:
         consumers_queue_size = config.consumers_queue_size,
         timeout_seconds = config.timeout_seconds
     )
+
+    metrics_calculator = RuntimeStatisticsCalculator(base_dir)
+    metrics = metrics_calculator.calculate_metrics()
+    metrics_calculator.log_metrics(metrics)
 
     try:
         processor.run()
