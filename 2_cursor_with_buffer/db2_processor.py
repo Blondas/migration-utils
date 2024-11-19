@@ -102,6 +102,7 @@ class StatusUpdate:
 
 @dataclass
 class ProcessingStats:
+    processed_commands: int = 0
     processed_objects: int = 0
     last_log_time: float = field(default_factory=time.time)
 
@@ -134,9 +135,10 @@ class MetricsMonitor:
         if self._monitor_thread:
             self._monitor_thread.join(timeout=5.0)
 
-    def increment_processed(self, count: int) -> None:
+    def increment_processed(self, command_object_count: int) -> None:
         """Increment the processed objects counter"""
-        self.stats.processed_objects += count
+        self.stats.processed_objects += command_object_count
+        self.stats.processed_commands += 1
 
     def set_queues(self, queue: Queue, update_queue: Queue) -> None:
         """Set the queue to monitor"""
@@ -163,6 +165,7 @@ class MetricsMonitor:
             f"Processing metrics - "
             f"Queue size: {self._queue.qsize()}/{self._queue.maxsize}, "
             f"Update queue size: {self._update_queue.qsize()}/{self._update_queue.maxsize}, "
+            f"Commands processed: {self.stats.processed_objects:,}"
             f"Total objects processed: {self.stats.processed_objects:,}"
         )
 
@@ -276,7 +279,7 @@ class RuntimeStatisticsCalculator:
             logger.info("-" * 80)
 
 
-class TapeCommandsBuilder:
+class CommandBatchBuilder:
     """
     Builds TapeCommandBatch objects from database rows belonging to the same tape_id.
     """
@@ -328,6 +331,67 @@ class TapeCommandsBuilder:
         tape_id = rows[0].tape_id
         if not all(r.tape_id == tape_id for r in rows):
             raise ValueError("All rows must have the same tape_id")
+
+        command_batches: List[Command] = []
+        current_object_records: List[ObjectRecord] = []
+        current_pri_nid: Optional[int] = None
+        current_agname: Optional[str] = None
+        current_agid_name: Optional[str] = None
+
+        for row in rows:
+            # Start new batch if pri_nid changes or max objects reached
+            if (current_pri_nid != row.pri_nid or
+                current_agname != row.agname or
+                len(current_object_records) >= self.max_objects):
+                if current_object_records:
+                    self._current_batch_no += 1
+
+                    command_batches.append(
+                        Command(
+                            od_inst=self.od_inst,
+                            user=self.user,
+                            password=self.password,
+                            agname=current_agname,
+                            pri_nid=current_pri_nid,
+                            dest_subdir=self._get_subfolder_path(current_agid_name),
+                            object_records=current_object_records
+                        )
+                    )
+                current_object_records = []
+                current_pri_nid = row.pri_nid
+                current_agname = row.agname
+                current_agid_name = row.agid_name
+
+            current_object_records.append(ObjectRecord(row.id, row.object_id))
+
+        # Handle last group
+        if current_object_records:
+            self._current_batch_no += 1
+            command_batches.append(
+                Command(
+                    od_inst=self.od_inst,
+                    user=self.user,
+                    password=self.password,
+                    agname=current_agname,
+                    pri_nid=current_pri_nid,
+                    dest_subdir=self._get_subfolder_path(current_agid_name),
+                    object_records=current_object_records
+                )
+            )
+
+        return command_batches
+
+    def simple_build_commands(
+        self,
+        rows: List[DBRow]
+    ) -> List[Command]:
+        logger.debug(f"build_tape_commands, Building tape commands for {len(rows)} rows")
+        """
+        Creates List[Command] without further constraints from all rows.
+        Expects rows to be sorted by: agname, odsloc, odcreats
+        """
+        if not rows:
+            return []
 
         command_batches: List[Command] = []
         current_object_records: List[ObjectRecord] = []
@@ -588,7 +652,7 @@ class StatusUpdateManager:
 
     def queue_update(self, status_update: StatusUpdate) -> None:
         if self.queue.full():
-            logger.warning("Update queue is full, consumer waiting.")
+            logger.warning("Update queue is full, may be blocking consumers.")
         if self.update_status:
             self.queue.put(status_update)
         else:
@@ -751,7 +815,7 @@ class DB2DataProcessor:
             read_db: DB2Connection,
             status_update_manager: StatusUpdateManager,
             table_name: str,
-            command_batch_builder: TapeCommandsBuilder,
+            command_batch_builder: CommandBatchBuilder,
             command_processor: CommandProcessor,
             metrics_monitor: MetricsMonitor,
             db_read_batch_size: int,
@@ -784,35 +848,31 @@ class DB2DataProcessor:
             )
             self.shutdown_event.set()
 
-    def _produce(
-            self,
-            rows: List[DBRow]
-    ) -> None:
-        if not rows:
-            return
+    def _fetch_by_tape(self):
+        def produce_by_tape(rows: List[DBRow]) -> None:
+            if not rows:
+                return
 
-        # Create tape commands for the group
-        tape_commands: List[Command] = self.command_batch_builder.build_tape_commands(rows)
+            # Create tape commands for the group
+            tape_commands: List[Command] = self.command_batch_builder.build_tape_commands(rows)
 
-        # Update status for all objects
-        status_update = StatusUpdate(
-            ids= {
-                obj.db_record_id
-                for cmd in tape_commands
-                for obj in cmd.object_records
-            },
-            status=ProcessingStatus.STARTED
-        )
-        self.status_update_manager.queue_update(status_update)
+            # Update status for all objects
+            status_update = StatusUpdate(
+                ids={
+                    obj.db_record_id
+                    for cmd in tape_commands
+                    for obj in cmd.object_records
+                },
+                status=ProcessingStatus.STARTED
+            )
+            self.status_update_manager.queue_update(status_update)
 
-        if self.queue.full():
-           logger.warning("Consumer queue is full")
+            if self.queue.full():
+                logger.warning("Consumer queue is full")
 
-        # Queue the tape commands
-        self.queue.put(tape_commands)
+            # Queue the tape commands
+            self.queue.put(tape_commands)
 
-    def producer(self) -> None:
-        logger.debug("producer thread started")
         try:
             with self.read_db.get_cursor() as cursor:
                 query: str = f"""
@@ -838,25 +898,6 @@ class DB2DataProcessor:
                     --#SET ISOLATION = UR
                     OPTIMIZE FOR {self.db_read_batch_size} ROWS
                 """
-                # query: str = f"""
-                #     SELECT
-                #         od_inst,
-                #         object_name,
-                #         pri_nid,
-                #         tape_id,
-                #         status,
-                #         dest_subdir,
-                #         retrieve_dt
-                #     FROM
-                #         {table_name}
-                #     WHERE
-                #         STATUS = '{ProcessingStatus.PENDING.value}'
-                #     ORDER BY
-                #         tape_id,
-                #         pri_nid
-                #     --#SET ISOLATION = UR
-                #     OPTIMIZE FOR {self.db_read_batch_size} ROWS
-                # """
 
                 cursor.execute(query)
 
@@ -874,7 +915,7 @@ class DB2DataProcessor:
                     if not rows:
                         # Process any remaining buffered rows
                         if buffer:
-                            self._produce(buffer)
+                            produce_by_tape(buffer)
                         break
 
                     db_rows: list[DBRow] = [DBRow(*row) for row in rows]
@@ -885,7 +926,7 @@ class DB2DataProcessor:
 
                         if row.tape_id != current_tape_id:
                             # Process complete tape group
-                            self._produce(buffer)
+                            produce_by_tape(buffer)
                             buffer = [row]
                             current_tape_id = row.tape_id
                         else:
@@ -901,6 +942,89 @@ class DB2DataProcessor:
         finally:
             for _ in range(self.num_consumers):
                 self.queue.put(None)
+
+    def _fetch_by_agname(self):
+        def simple_produce(rows: List[DBRow]) -> None:
+            if not rows:
+                return
+
+            # Create commands
+            commands: List[Command] = self.command_batch_builder.simple_build_commands(rows)
+
+            # Update status for all objects
+            status_update = StatusUpdate(
+                ids={
+                    obj.db_record_id
+                    for cmd in commands
+                    for obj in cmd.object_records
+                },
+                status=ProcessingStatus.STARTED
+            )
+            self.status_update_manager.queue_update(status_update)
+
+            if self.queue.full():
+                logger.warning("Consumer queue is full")
+
+            # Queue the tape commands, only one command in list
+            for command in commands:
+                if self.queue.full():
+                    logger.warning("Consumer queue is full")
+                self.queue.put([command])
+
+        try:
+            with self.read_db.get_cursor() as cursor:
+                query: str = f"""
+                    SELECT 
+                        ID,
+                        ODSLOC,
+                        ODCREATS,
+                        AGID_NAME,
+                        AGNAME,
+                        LOADID,
+                        PRINID,
+                        STATUS,
+                        DTSTAMP
+                    FROM 
+                        {self.table_name}
+                    WHERE 
+                        STATUS = '{ProcessingStatus.NOTSTARTED.value}'
+                    ORDER BY 
+                        AGNAME,
+                        ODSLOC,
+                        ODCREATS
+                    --#SET ISOLATION = UR
+                    OPTIMIZE FOR {self.db_read_batch_size} ROWS
+                """
+
+                cursor.execute(query)
+
+                buffer: List[DBRow] = []
+                current_tape_id: Optional[str] = None
+
+                while True:
+                    self._check_timeout()
+                    if self.shutdown_event.is_set():
+                        break
+
+                    rows = cursor.fetchmany(self.db_read_batch_size)
+                    if not rows:
+                        break
+
+                    db_rows: list[DBRow] = [DBRow(*row) for row in rows]
+                    simple_produce(db_rows)
+
+        except Exception as e:
+            logger.error(f"Producer failed: {e}")
+            self.shutdown_event.set()
+            raise
+        finally:
+            for _ in range(self.num_consumers):
+                self.queue.put(None)
+
+    def producer(self) -> None:
+        logger.debug("producer thread started")
+        # self._fetch_by_tape()
+        self._fetch_by_agname()
 
     def consumer(self) -> None:
         logger.info("consumer started")
@@ -1033,7 +1157,7 @@ def main() -> None:
     update_db: DB2Connection = DB2Connection(config.database, for_updates=True)
 
     base_dir: str = f'{config.base_dir}/{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}'
-    tape_batch_builder: TapeCommandsBuilder = TapeCommandsBuilder(
+    tape_batch_builder: CommandBatchBuilder = CommandBatchBuilder(
         command_max_objects = config.command_max_objects,
         dir_max_elems = config.dir_max_elems,
         user = config.user,
@@ -1061,12 +1185,12 @@ def main() -> None:
         timeout_seconds = config.timeout_seconds
     )
 
-    metrics_calculator = RuntimeStatisticsCalculator(base_dir)
-    metrics = metrics_calculator.calculate_metrics()
-    metrics_calculator.log_metrics(metrics)
-
     try:
         processor.run()
+
+        metrics_calculator = RuntimeStatisticsCalculator(base_dir)
+        metrics = metrics_calculator.calculate_metrics()
+        metrics_calculator.log_metrics(metrics)
     except Exception as e:
         logger.error(f"Processing failed: {e}")
         raise
