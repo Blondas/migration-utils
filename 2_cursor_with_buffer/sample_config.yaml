@@ -20,3 +20,6 @@ arsadmin:
   password: null  # Optional, can be null/omitted
   od_inst: "od_instance_name"
   base_dir: "/path/to/base/directory"
+
+  # Optional timeout in seconds (null means no timeout)
+  timeout_seconds: null  # Set to a number like 3600 for a 1-hour timeout
