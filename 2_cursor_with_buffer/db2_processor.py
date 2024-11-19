@@ -42,6 +42,8 @@ class Config:
     od_inst: str
     base_dir: str
 
+    timeout_seconds: Optional[int] = None
+
 
 class ProcessingStatus(Enum):
     NOTSTARTED = 'notstarted'
@@ -641,6 +643,7 @@ class DB2DataProcessor:
             db_read_batch_size: int,
             num_consumers: int,
             consumers_queue_size: int,
+            timeout_seconds: int
     ) -> None:
         self.read_db = read_db
         self.status_update_manager = status_update_manager
@@ -655,6 +658,17 @@ class DB2DataProcessor:
         self.db_read_batch_size = db_read_batch_size
         self.num_consumers = num_consumers
         self.shutdown_event: threading.Event = threading.Event()
+
+        self.timeout_seconds = timeout_seconds
+        self.start_time: float = time.time()
+
+    def _check_timeout(self) -> None:
+        if self.timeout_seconds and time.time() - self.start_time > self.timeout_seconds:
+            logger.error(
+                f"Timeout of {self.timeout_seconds} seconds reached, "
+                f"Initiating shutdown..."
+            )
+            self.shutdown_event.set()
 
     def _produce(
             self,
@@ -682,7 +696,6 @@ class DB2DataProcessor:
 
         # Queue the tape commands
         self.queue.put(tape_commands)
-
 
     def producer(self) -> None:
         logger.debug("producer thread started")
@@ -884,7 +897,10 @@ def load_config(config_path: Optional[str] = None) -> Config:
         user=yaml_config['arsadmin']['user'],
         password=yaml_config['arsadmin'].get('password'),  # Optional
         od_inst=yaml_config['arsadmin']['od_inst'],
-        base_dir=yaml_config['arsadmin']['base_dir']
+        base_dir=yaml_config['arsadmin']['base_dir'],
+
+        # Timeout
+        timeout_seconds=yaml_config['timeout_seconds'],
     )
 
 
@@ -898,7 +914,6 @@ def main() -> None:
     exit()
 
     logger.info(f"Running with settings: {yaml.dump(asdict(config), sort_keys=False,)}")
-    logger.info(f"Command line parameters: {vars(args)}")
 
     read_db: DB2Connection = DB2Connection(config.database, for_updates=False)
     update_db: DB2Connection = DB2Connection(config.database, for_updates=True)
@@ -916,7 +931,7 @@ def main() -> None:
         db = update_db,
         table_name= args.table_name,
         queue_size= config.update_queue_size,
-        update_status = args.update_status
+        update_status = config.update_status
     )
     command_processor = CommandProcessor()
     processor = DB2DataProcessor(
@@ -928,7 +943,8 @@ def main() -> None:
         metrics_monitor= MetricsMonitor(5),
         db_read_batch_size= config.read_batch_size,
         num_consumers = config.num_consumers,
-        consumers_queue_size = config.consumers_queue_size
+        consumers_queue_size = config.consumers_queue_size,
+        timeout_seconds = config.timeout_seconds
     )
 
     try:
