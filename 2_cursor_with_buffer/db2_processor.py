@@ -32,6 +32,7 @@ class Config:
 
     # DB updater setup
     update_queue_size: int
+    update_status: bool
 
     # Arsadmin setup
     command_max_objects: int
@@ -875,6 +876,7 @@ def load_config(config_path: Optional[str] = None) -> Config:
 
         # Updater
         update_queue_size=yaml_config['db_updater']['update_queue_size'],
+        update_status=yaml_config['db_updater']['update_status'],
 
         # Arsadmin
         command_max_objects=yaml_config['arsadmin']['command_max_objects'],
@@ -891,10 +893,12 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(description='Arsadmin Retrieve Command Executor')
     parser.add_argument('--table_name', help='Table name to drive payload migration', required=True)
-    parser.add_argument('--update_status', help='Enable/disable status updates in DB', type=bool, default=False)
     args = parser.parse_args()
 
+    exit()
+
     logger.info(f"Running with settings: {yaml.dump(asdict(config), sort_keys=False,)}")
+    logger.info(f"Command line parameters: {vars(args)}")
 
     read_db: DB2Connection = DB2Connection(config.database, for_updates=False)
     update_db: DB2Connection = DB2Connection(config.database, for_updates=True)

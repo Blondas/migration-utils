@@ -9,9 +9,8 @@ producer_consumer:
 
 # Database updater configuration
 db_updater:
-  update_batch_size: 1000
   update_queue_size: 100
-  update_interval_seconds: 5
+  update_status: false
 
 # ArsAdmin command configuration
 arsadmin:
