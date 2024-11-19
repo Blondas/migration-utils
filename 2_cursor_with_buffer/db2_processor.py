@@ -156,8 +156,8 @@ class MetricsMonitor:
         """Log current metrics"""
         logger.info(
             f"Processing metrics - "
-            f"Queue size: {self._queue.qsize()}, "
-            f"Update queue size: {self._queue.qsize()}, "
+            f"Queue size: {self._queue.qsize()}/{self._queue.maxsize}, "
+            f"Update queue size: {self._update_queue.qsize()}/{self._update_queue.maxsize}, "
             f"Total objects processed: {self.stats.processed_objects:,}"
         )
 
@@ -478,7 +478,7 @@ class StatusUpdateManager:
         if self.update_status:
             self.queue.put(status_update)
         else:
-            logger.info("--update_status=False, skipping status update")
+            logger.debug("--update_status=False, skipping status update")
 
     def _update_status_worker(self) -> None:
         while not self.shutdown_event.is_set():
@@ -498,7 +498,7 @@ class StatusUpdateManager:
 
     def _process_single_update(self, update: StatusUpdate) -> None:
         if not self.update_status:
-            logger.info("_process_single_update: Not updating status in db")
+            logger.debug("_process_single_update: Not updating status in db")
             return
 
         try:
