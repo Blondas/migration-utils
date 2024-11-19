@@ -750,6 +750,7 @@ class DB2DataProcessor:
                 current_tape_id: Optional[str] = None
 
                 while True:
+                    self._check_timeout()
                     if self.shutdown_event.is_set():
                         break
 
@@ -791,6 +792,7 @@ class DB2DataProcessor:
         logger.info("consumer started")
         while not self.shutdown_event.is_set():
             try:
+                self._check_timeout()
                 if self.queue.empty():
                     logger.warning("Consumer queue is empty")
 
@@ -841,7 +843,7 @@ class DB2DataProcessor:
                 self.queue.task_done()
 
     def run(self):
-        # Start metrics monitor
+        # Start metrics monitor (as daemon), no needs to kill it explicitly
         self.metrics_monitor.start()
 
         # Start producer
