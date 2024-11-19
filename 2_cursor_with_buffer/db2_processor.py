@@ -165,7 +165,7 @@ class MetricsMonitor:
             f"Processing metrics - "
             f"Queue size: {self._queue.qsize()}/{self._queue.maxsize}, "
             f"Update queue size: {self._update_queue.qsize()}/{self._update_queue.maxsize}, "
-            f"Commands processed: {self.stats.processed_objects:,}"
+            f"Commands processed: {self.stats.processed_commands:,}, "
             f"Total objects processed: {self.stats.processed_objects:,}"
         )
 
