@@ -21,7 +21,11 @@ import argparse
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s.%(msecs)03d | %(levelname)-8s | %(threadName)-12s | %(funcName)s:%(lineno)d | %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
+    datefmt='%Y-%m-%d %H:%M:%S',
+    handlers=[
+        logging.StreamHandler,
+        logging.FileHandler(filename='processing.log')
+    ]
 )
 logger = logging.getLogger(__name__)
 
@@ -198,6 +202,7 @@ class RuntimeStatistics:
             return 0.0
         return self.total_size_bytes / self.total_files
 
+
 class RuntimeStatisticsCalculator:
         """Handles calculation and formatting of processing metrics"""
 
@@ -260,30 +265,29 @@ class RuntimeStatisticsCalculator:
 
         def log_metrics(self, metrics: RuntimeStatistics, config: Config) -> None:
             """Log all metrics in a formatted way"""
-            logger.info("-" * 80)
-            logger.info("Processing completed. Final metrics:")
 
-            # Basic metrics
-            logger.info(f"Total runtime: {self.format_runtime(metrics.runtime_seconds)} ({metrics.runtime_seconds:.2f} seconds)")
-            logger.info(f"Total files processed: {metrics.total_files:,}")
-            logger.info(f"Total size: {self.format_size(metrics.total_size_bytes)} ({metrics.total_size_bytes:,} bytes)")
+            lst = []
+            for key, value in asdict(config):
+                lst.append(f"{key}: {value}")
 
-            # Size statistics
-            logger.info(f"Average file size: {self.format_size(int(metrics.average_file_size()))} ({int(metrics.average_file_size()):,} bytes)")
-            logger.info(f"Median file size: {self.format_size(int(metrics.median_size_bytes))} ({int(metrics.median_size_bytes):,} bytes)")
-            logger.info(f"Smallest file: {self.format_size(metrics.min_size_bytes)} ({metrics.min_size_bytes:,} bytes)")
-            logger.info(f"Largest file: {self.format_size(metrics.max_size_bytes)} ({metrics.max_size_bytes:,} bytes)")
+            log_entries = [
+                "-" * 80,
+                "Processing completed. Final metrics:",
+                f"Total runtime: {self.format_runtime(metrics.runtime_seconds)} ({metrics.runtime_seconds:.2f} seconds)",
+                f"Total files processed: {metrics.total_files:,}",
+                f"Total size: {self.format_size(metrics.total_size_bytes)} ({metrics.total_size_bytes:,} bytes)",
+                f"Average file size: {self.format_size(int(metrics.average_file_size()))} ({int(metrics.average_file_size()):,} bytes)",
+                f"Median file size: {self.format_size(int(metrics.median_size_bytes))} ({int(metrics.median_size_bytes):,} bytes)",
+                f"Smallest file: {self.format_size(metrics.min_size_bytes)} ({metrics.min_size_bytes:,} bytes)",
+                f"Largest file: {self.format_size(metrics.max_size_bytes)} ({metrics.max_size_bytes:,} bytes)",
+                f"Processing rate: {metrics.get_processing_rate():.2f} files/second",
+                f"Throughput: {self.format_size(int(metrics.get_throughput()))}/second",
+                "-" * 80,
+                "Configuration:",
+                *lst,
+                "-" * 80
+            ]
 
-            # Performance metrics
-            logger.info(f"Processing rate: {metrics.get_processing_rate():.2f} files/second")
-            logger.info(f"Throughput: {self.format_size(int(metrics.get_throughput()))}/second")
-
-            # Configuration
-            logger.info("-" * 80)
-            logger.info("Configuration:")
-
-            logger.info(f"{yaml.dump(asdict(config), sort_keys=False,)}")
-            logger.info("-" * 80)
 
 class CommandBatchBuilder:
     """
@@ -685,6 +689,7 @@ class CommandProcessor:
 
                 else:
                     # Command successful - mark all remaining objects as successful
+                    command.
                     for object_record in remaining_object_records:
                         successful_ids.add(object_record.db_record_id)
                     break
@@ -701,7 +706,7 @@ class CommandProcessor:
         )
 
 
-class DB2DataProcessor:
+class DataProcessor:
     def __init__(
             self,
             read_db: DB2Connection,
@@ -1062,7 +1067,7 @@ def main() -> None:
         update_status = config.update_status
     )
     command_processor = CommandProcessor()
-    processor = DB2DataProcessor(
+    processor = DataProcessor(
         read_db = read_db,
         status_update_manager = status_update_manager,
         table_name = args.table_name,
