@@ -17,12 +17,16 @@ import subprocess
 import yaml
 import argparse
 
-logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 formatter = logging.Formatter(
         fmt='%(asctime)s.%(msecs)03d | %(levelname)-8s | %(threadName)-12s | %(funcName)s:%(lineno)d | %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     )
-logger = logging.getLogger(__name__)
+
+logging.basicConfig(level=logging.INFO)
+logger.setFormatter(formatter)  # This line is missing but needed
+
+
 
 
 @dataclass(frozen=True)
@@ -268,7 +272,7 @@ class RuntimeStatisticsCalculator:
             logger.info(f"Total size: {self.format_size(metrics.total_size_bytes)} ({metrics.total_size_bytes:,} bytes)")
 
             # Size statistics
-            logger.info(f"Average file size: {self.format_size(int(metrics.average_file_size))} ({int(metrics.average_file_size):,} bytes)")
+            logger.info(f"Average file size: {self.format_size(int(metrics.average_file_size()))} ({int(metrics.average_file_size()):,} bytes)")
             logger.info(f"Median file size: {self.format_size(int(metrics.median_size_bytes))} ({int(metrics.median_size_bytes):,} bytes)")
             logger.info(f"Smallest file: {self.format_size(metrics.min_size_bytes)} ({metrics.min_size_bytes:,} bytes)")
             logger.info(f"Largest file: {self.format_size(metrics.max_size_bytes)} ({metrics.max_size_bytes:,} bytes)")
@@ -987,7 +991,7 @@ class DB2DataProcessor:
                     FROM 
                         {self.table_name}
                     WHERE 
-                        STATUS = '{ProcessingStatus.NOTSTARTED.value}'
+                        STATUS = '{ProcessingStatus.NOTSTARTED.value}' AND AGNAME != ''
                     ORDER BY 
                         AGNAME,
                         ODSLOC,
@@ -1034,7 +1038,9 @@ class DB2DataProcessor:
                 if self.queue.empty():
                     logger.warning("Consumer queue is empty")
 
+                logger.info(f"before consumer pull, queue size: {self.queue.qsize()}")
                 tape_commands: Optional[List[Command]] = self.queue.get()
+                logger.info(f"after consumer pull, queue size: {self.queue.qsize()}")
                 if tape_commands is None:
                     break
 
@@ -1157,6 +1163,9 @@ def main() -> None:
     update_db: DB2Connection = DB2Connection(config.database, for_updates=True)
 
     base_dir: str = f'{config.base_dir}/{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}'
+
+    metrics_calculator = RuntimeStatisticsCalculator(base_dir)
+
     tape_batch_builder: CommandBatchBuilder = CommandBatchBuilder(
         command_max_objects = config.command_max_objects,
         dir_max_elems = config.dir_max_elems,
@@ -1188,7 +1197,7 @@ def main() -> None:
     try:
         processor.run()
 
-        metrics_calculator = RuntimeStatisticsCalculator(base_dir)
+
         metrics = metrics_calculator.calculate_metrics()
         metrics_calculator.log_metrics(metrics)
     except Exception as e:
