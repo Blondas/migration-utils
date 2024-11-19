@@ -472,7 +472,10 @@ class StatusUpdateManager:
     def queue_update(self, status_update: StatusUpdate) -> None:
         if self.queue.full():
             logger.warning("Update queue is full, consumer waiting.")
-        self.queue.put(status_update)
+        if self.update_status:
+            self.queue.put(status_update)
+        else:
+            logger.info("--update_status=False, skipping status update")
 
     def _update_status_worker(self) -> None:
         while not self.shutdown_event.is_set():
