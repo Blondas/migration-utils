@@ -258,7 +258,7 @@ class RuntimeStatisticsCalculator:
 
             return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
-        def log_metrics(self, metrics: RuntimeStatistics) -> None:
+        def log_metrics(self, metrics: RuntimeStatistics, config: Config) -> None:
             """Log all metrics in a formatted way"""
             logger.info("-" * 80)
             logger.info("Processing completed. Final metrics:")
@@ -277,8 +277,13 @@ class RuntimeStatisticsCalculator:
             # Performance metrics
             logger.info(f"Processing rate: {metrics.get_processing_rate():.2f} files/second")
             logger.info(f"Throughput: {self.format_size(int(metrics.get_throughput()))}/second")
-            logger.info("-" * 80)
 
+            # Configuration
+            logger.info("-" * 80)
+            logger.info("Configuration:")
+
+            logger.info(f"{yaml.dump(asdict(config), sort_keys=False,)}")
+            logger.info("-" * 80)
 
 class CommandBatchBuilder:
     """
@@ -507,120 +512,6 @@ class DB2Connection:
                 logger.error(f"Error closing database connection: {str(e)}")
 
 
-# class StatusUpdateManager_old:
-#     def __init__(
-#             self,
-#             db: DB2Connection,
-#             table_name: str,
-#             batch_size: int,
-#             queue_size: int,
-#             update_interval_seconds: int,
-#             update_status: bool
-#     ) -> None:
-#         self.db = db
-#         self.table_name = table_name
-#         self.batch_size: int = batch_size
-#         self.queue: Queue[Optional[StatusUpdate]] = Queue(queue_size)
-#         self.update_interval_seconds: int = update_interval_seconds
-#         self.shutdown_event: threading.Event = threading.Event()
-#         self.update_thread: Optional[threading.Thread] = None
-#         self.update_status: bool = update_status
-#
-#     def start(self) -> None:
-#         self.update_thread = threading.Thread(
-#             target=self._update_status_worker,
-#             name='status_updater'
-#         )
-#         self.update_thread.start()
-#         logger.info("Status update manager started")
-#
-#     def stop(self) -> None:
-#         self.shutdown_event.set()
-#         self.queue.put(None)
-#         if self.update_thread:
-#             self.update_thread.join()
-#         logger.info("Status update manager stopped")
-#
-#     def queue_update(self, status_update: StatusUpdate) -> None:
-#         if self.queue.full():
-#             logger.warning("Update queue is full, consumer waiting.")
-#         self.queue.put(status_update)
-#
-#     def _update_status_worker(self) -> None:
-#         pending_updates: List[StatusUpdate] = []
-#         last_update_time: float = time.time()
-#
-#         while not self.shutdown_event.is_set():
-#             try:
-#                 queue_query_interval_seconds: float = 1.0
-#                 update: Optional[StatusUpdate] = self.queue.get(timeout=queue_query_interval_seconds)
-#                 if update is None:
-#                     break
-#
-#                 pending_updates.append(update)
-#
-#                 if (len(pending_updates) >= self.batch_size or
-#                         time.time() - last_update_time > self.update_interval_seconds):
-#                     self._process_updates(pending_updates)
-#                     pending_updates = []
-#                     last_update_time = time.time()
-#
-#             except Empty:
-#                 if pending_updates:
-#                     self._process_updates(pending_updates)
-#                     pending_updates = []
-#                     last_update_time = time.time()
-#
-#             except Exception as e:
-#                 logger.error(f"Status update worker failed: {e}")
-#                 for pending_update in pending_updates:
-#                     self.queue.put(pending_update)
-#                 time.sleep(1)
-#
-#         if pending_updates:
-#             try:
-#                 self._process_updates(pending_updates)
-#             except Exception as e:
-#                 logger.error(f"Final status update failed: {e}")
-#
-#     def _process_updates(self, updates: List[StatusUpdate]) -> None:
-#         updates_by_status: Dict[ProcessingStatus, Set[int]] = {}
-#         for update in updates:
-#             if update.status not in updates_by_status:
-#                 updates_by_status[update.status] = set()
-#             updates_by_status[update.status].update(update.ids)
-#
-#         try:
-#             if self.update_status:
-#                 logger.info("_process_updates: Updating status in db")
-#                 with self.db.get_cursor() as cursor:
-#                     for status, ids in updates_by_status.items():
-#                         for i in range(0, len(ids), self.batch_size):
-#                             batch = list(ids)[i:i + self.batch_size]
-#                             id_values: str = ",".join(str(idx) for idx in batch)
-#
-#                             base_sql = f"""
-#                             UPDATE {self.table_name}
-#                             SET STATUS = ?,
-#                             DTSTAMP = CURRENT TIMESTAMP
-#                             WHERE ID IN ({id_values})
-#                             """
-#                             cursor.execute(base_sql, (status.value,))
-#
-#                 # logger.info(
-#                 #     f"Updated status for {sum(len(b.ids) for b in updates)} "
-#                 #     f"records across {len(updates)} batches"
-#                 # )
-#
-#             else:
-#                 logger.info("_process_updates: Not updating status in db")
-#         except Exception as e:
-#             logger.error(
-#                 f"Status update failed, error: {e}"
-#             )
-#             raise
-
-
 class StatusUpdateManager:
     def __init__(
             self,
@@ -653,7 +544,7 @@ class StatusUpdateManager:
 
     def queue_update(self, status_update: StatusUpdate) -> None:
         if self.queue.full():
-            logger.warning("Update queue is full, may be blocking consumers.")
+            logger.warning("Update-queue is full, may be blocking consumers.")
         if self.update_status:
             self.queue.put(status_update)
         else:
@@ -869,7 +760,7 @@ class DB2DataProcessor:
             self.status_update_manager.queue_update(status_update)
 
             if self.queue.full():
-                logger.warning("Consumer queue is full")
+                logger.warning("Consumer-queue is full, may be blocking producers")
 
             # Queue the tape commands
             self.queue.put(tape_commands)
@@ -963,13 +854,10 @@ class DB2DataProcessor:
             )
             self.status_update_manager.queue_update(status_update)
 
-            if self.queue.full():
-                logger.warning("Consumer queue is full")
-
             # Queue the tape commands, only one command in list
             for command in commands:
                 if self.queue.full():
-                    logger.warning("Consumer queue is full")
+                    logger.warning("Consumer-queue is full, may be blocking producers")
                 self.queue.put([command])
 
         try:
@@ -1033,11 +921,9 @@ class DB2DataProcessor:
             try:
                 self._check_timeout()
                 if self.queue.empty():
-                    logger.warning("Consumer queue is empty")
+                    logger.warning("Consumer-queue is empty, consumer may be idle")
 
-                logger.info(f"before consumer pull, queue size: {self.queue.qsize()}")
                 tape_commands: Optional[List[Command]] = self.queue.get()
-                logger.info(f"after consumer pull, queue size: {self.queue.qsize()}")
                 if tape_commands is None:
                     break
 
@@ -1154,8 +1040,6 @@ def main() -> None:
     parser.add_argument('--table_name', help='Table name to drive payload migration', required=True)
     args = parser.parse_args()
 
-    logger.info(f"Running with settings: {yaml.dump(asdict(config), sort_keys=False,)}")
-
     read_db: DB2Connection = DB2Connection(config.database, for_updates=False)
     update_db: DB2Connection = DB2Connection(config.database, for_updates=True)
 
@@ -1194,9 +1078,9 @@ def main() -> None:
     try:
         processor.run()
 
-
         metrics = metrics_calculator.calculate_metrics()
-        metrics_calculator.log_metrics(metrics)
+        metrics_calculator.log_metrics(metrics, config)
+
     except Exception as e:
         logger.error(f"Processing failed: {e}")
         raise
