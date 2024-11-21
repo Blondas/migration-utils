@@ -26,4 +26,5 @@ monitoring:
   metrics_interval_seconds: 30
   minimum_disk_space_percentage: 5
   disk_interval_seconds: 5
+  runtime_statistics_interval: 300
   timeout_seconds: null  # Optional timeout in seconds (null means no timeout)

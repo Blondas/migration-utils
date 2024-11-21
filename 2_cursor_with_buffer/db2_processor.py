@@ -62,6 +62,7 @@ class Config:
     metrics_interval_seconds: int
     minimum_disk_space_percentage: int
     disk_interval_seconds: int
+    runtime_statistics_interval: int
     timeout_seconds: Optional[int]
 
 
@@ -272,9 +273,46 @@ class RuntimeStatistics:
 class RuntimeStatisticsCalculator:
         """Handles calculation and formatting of processing metrics"""
 
-        def __init__(self, base_dir: str):
+        def __init__(self, base_dir: str, interval_seconds: int) -> None:
             self.base_dir: str = base_dir
             self.start_time: float = time.time()
+            self.interval_seconds: int = interval_seconds
+            self._shutdown_event: threading.Event = threading.Event()
+            self._monitor_thread: Optional[threading.Thread] = None
+
+        def start(self) -> None:
+            """Start the monitoring thread"""
+            self._monitor_thread = threading.Thread(
+                target=self._monitor_loop,
+                name='runtime_stats_monitor'
+            )
+            self._monitor_thread.daemon = True
+            self._monitor_thread.start()
+            logger.info("Runtime statistics monitoring started")
+
+        def stop(self) -> None:
+            metrics: RuntimeStatistics = self.calculate_metrics()
+            self.log_metrics(metrics)
+
+            """Stop the monitoring thread"""
+            self._shutdown_event.set()
+            if self._monitor_thread:
+                self._monitor_thread.join(timeout=5.0)
+            logger.info("Runtime statistics monitoring stopped")
+
+        def _monitor_loop(self) -> None:
+            """Main monitoring loop"""
+            while not self._shutdown_event.is_set():
+                try:
+                    metrics: RuntimeStatistics = self.calculate_metrics()
+                    self.log_metrics(metrics)
+
+                    # Sleep until next interval
+                    time.sleep(self.interval_seconds)
+
+                except Exception as e:
+                    logger.error(f"Error in runtime statistics monitor: {e}")
+                    time.sleep(5.0)  # Back off on error
 
         def calculate_metrics(self) -> RuntimeStatistics:
             """Calculate all metrics for files in directory tree"""
@@ -777,6 +815,7 @@ class DataProcessor:
             command_processor: CommandProcessor,
             metrics_monitor: MetricsMonitor,
             disk_space_monitor: DiskSpaceMonitor,
+            runtime_stats_calculator: RuntimeStatisticsCalculator,
             db_read_batch_size: int,
             num_consumers: int,
             consumers_queue_size: int,
@@ -793,6 +832,7 @@ class DataProcessor:
         self.metrics_monitor.set_queues(self.queue, self.status_update_manager.queue)
 
         self.disk_space_monitor: DiskSpaceMonitor = disk_space_monitor
+        self.runtime_statistics_calculator: RuntimeStatisticsCalculator = runtime_stats_calculator
 
         self.db_read_batch_size = db_read_batch_size
         self.num_consumers = num_consumers
@@ -1039,6 +1079,7 @@ class DataProcessor:
         # Start monitoring daemons, no needs to kill tem explicitly
         self.metrics_monitor.start()
         self.disk_space_monitor.start()
+        self.runtime_statistics_calculator.start()
 
         # Start producer
         producer_thread = threading.Thread(target=self.producer)
@@ -1065,6 +1106,7 @@ class DataProcessor:
         finally:
             self.metrics_monitor.stop()
             self.disk_space_monitor.stop()
+            self.runtime_statistics_calculator.stop()
 
 
 def load_config(config_path: Optional[str] = None) -> Config:
@@ -1100,6 +1142,7 @@ def load_config(config_path: Optional[str] = None) -> Config:
         metrics_interval_seconds=yaml_config['monitoring']['metrics_interval_seconds'],
         minimum_disk_space_percentage=yaml_config['monitoring']['minimum_disk_space_percentage'],
         disk_interval_seconds=yaml_config['monitoring']['disk_interval_seconds'],
+        runtime_statistics_interval=yaml_config['monitoring']['runtime_statistics_interval'],
         timeout_seconds=yaml_config['monitoring']['timeout_seconds'],
     )
 
@@ -1116,7 +1159,7 @@ def main() -> None:
 
     base_dir: str = f'{config.base_dir}/{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}'
 
-    runtime_statistics = RuntimeStatisticsCalculator(base_dir)
+    runtime_statistics_calculator = RuntimeStatisticsCalculator(base_dir, config.runtime_statistics_interval)
 
     tape_batch_builder: CommandBatchBuilder = CommandBatchBuilder(
         command_max_objects = config.command_max_objects,
@@ -1147,6 +1190,7 @@ def main() -> None:
         command_processor = command_processor,
         metrics_monitor= metrics_monitor,
         disk_space_monitor= disk_space_monitor,
+        runtime_stats_calculator= runtime_statistics_calculator,
         db_read_batch_size= config.read_batch_size,
         num_consumers = config.num_consumers,
         consumers_queue_size = config.consumers_queue_size,
@@ -1155,9 +1199,6 @@ def main() -> None:
 
     try:
         processor.run()
-
-        metrics = runtime_statistics.calculate_metrics()
-        runtime_statistics.log_metrics(metrics)
 
     except Exception as e:
         logger.error(f"Processing failed: {e}")
