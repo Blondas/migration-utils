@@ -1,4 +1,5 @@
 import statistics
+import sys
 from pathlib import Path
 
 import ibm_db_dbi
@@ -7,15 +8,16 @@ from queue import Queue, Empty
 from typing import List, Optional, Tuple, Iterator, Set, NamedTuple
 from contextlib import contextmanager
 import time
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
-import os
 import logging
 import re
 import subprocess
 import yaml
 import argparse
+import psutil
+import os
 
 
 # Create handler instances
@@ -56,7 +58,11 @@ class Config:
     od_inst: str
     base_dir: str
 
-    timeout_seconds: Optional[int] = None
+    # Monitoring
+    metrics_interval_seconds: int
+    minimum_disk_space_percentage: int
+    disk_interval_seconds: int
+    timeout_seconds: Optional[int]
 
 
 class ProcessingStatus(Enum):
@@ -179,6 +185,62 @@ class MetricsMonitor:
         )
 
 
+class DiskSpaceMonitor:
+    def __init__(
+        self,
+        path: str,
+        minimum_disk_space_percentage: int,
+        interval_seconds: int
+    ) -> None:
+        self.path: str = path
+        self.minimum_disk_space_percentage: int = minimum_disk_space_percentage
+        self.interval_seconds: int = interval_seconds
+
+        self._monitor_thread: Optional[threading.Thread] = None
+        self._stop_event: threading.Event = threading.Event()
+
+    def start(self) -> None:
+        """Start disk monitoring in a separate thread"""
+        self._monitor_thread = threading.Thread(
+            target=self._monitor_loop,
+            name='disk_monitor'
+        )
+        self._monitor_thread.daemon = True
+        self._monitor_thread.start()
+        logging.info("Disk space monitoring started")
+
+    def stop(self) -> None:
+        """Stop disk monitoring"""
+        self._stop_event.set()
+        if self._monitor_thread:
+            self._monitor_thread.join(timeout=5.0)
+
+    def _get_disk_usage(self) -> float:
+        """Returns free disk space percentage"""
+        usage = psutil.disk_usage(self.path)
+        return usage.free / usage.total * 100
+
+    def _monitor_loop(self) -> None:
+        while not self._stop_event.is_set():
+            try:
+                free_space = self._get_disk_usage()
+                logger.info(f"Free disk space: {free_space:.2f}%")
+                if free_space < self.minimum_disk_space_percentage:
+                    logging.error(
+                        f"Free disk space {free_space:.2f}% below threshold "
+                        f"{self.minimum_disk_space_percentage}%. "
+                        f"Hard killing the process."
+                    )
+                    # Force exit without cleanup
+                    sys.exit(1)
+
+                threading.Event().wait(self.interval_seconds)
+
+            except Exception as e:
+                logging.error(f"Disk monitoring error: {e}")
+                threading.Event().wait(5.0)  # Back off on error
+
+
 @dataclass(frozen=True)
 class RuntimeStatistics:
     runtime_seconds: float
@@ -267,7 +329,7 @@ class RuntimeStatisticsCalculator:
 
             return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
-        def log_metrics(self, metrics: RuntimeStatistics, config: Config) -> None:
+        def log_metrics(self, metrics: RuntimeStatistics) -> None:
             """Log all metrics in a formatted way"""
 
             log_entries = [
@@ -714,6 +776,7 @@ class DataProcessor:
             command_batch_builder: CommandBatchBuilder,
             command_processor: CommandProcessor,
             metrics_monitor: MetricsMonitor,
+            disk_space_monitor: DiskSpaceMonitor,
             db_read_batch_size: int,
             num_consumers: int,
             consumers_queue_size: int,
@@ -728,6 +791,8 @@ class DataProcessor:
 
         self.metrics_monitor = metrics_monitor
         self.metrics_monitor.set_queues(self.queue, self.status_update_manager.queue)
+
+        self.disk_space_monitor: DiskSpaceMonitor = disk_space_monitor
 
         self.db_read_batch_size = db_read_batch_size
         self.num_consumers = num_consumers
@@ -891,9 +956,6 @@ class DataProcessor:
 
                 cursor.execute(query)
 
-                buffer: List[DBRow] = []
-                current_tape_id: Optional[str] = None
-
                 while True:
                     self._check_timeout()
                     if self.shutdown_event.is_set():
@@ -974,8 +1036,9 @@ class DataProcessor:
                 self.queue.task_done()
 
     def run(self):
-        # Start metrics monitor (as daemon), no needs to kill it explicitly
+        # Start monitoring daemons, no needs to kill tem explicitly
         self.metrics_monitor.start()
+        self.disk_space_monitor.start()
 
         # Start producer
         producer_thread = threading.Thread(target=self.producer)
@@ -1001,6 +1064,7 @@ class DataProcessor:
 
         finally:
             self.metrics_monitor.stop()
+            self.disk_space_monitor.stop()
 
 
 def load_config(config_path: Optional[str] = None) -> Config:
@@ -1032,8 +1096,11 @@ def load_config(config_path: Optional[str] = None) -> Config:
         od_inst=yaml_config['arsadmin']['od_inst'],
         base_dir=yaml_config['arsadmin']['base_dir'],
 
-        # Timeout
-        timeout_seconds=yaml_config['timeout_seconds'],
+        # Monitoring
+        metrics_interval_seconds=yaml_config['monitoring']['metrics_interval_seconds'],
+        minimum_disk_space_percentage=yaml_config['monitoring']['minimum_disk_space_percentage'],
+        disk_interval_seconds=yaml_config['monitoring']['disk_interval_seconds'],
+        timeout_seconds=yaml_config['monitoring']['timeout_seconds'],
     )
 
 
@@ -1049,7 +1116,7 @@ def main() -> None:
 
     base_dir: str = f'{config.base_dir}/{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}'
 
-    metrics_calculator = RuntimeStatisticsCalculator(base_dir)
+    runtime_statistics = RuntimeStatisticsCalculator(base_dir)
 
     tape_batch_builder: CommandBatchBuilder = CommandBatchBuilder(
         command_max_objects = config.command_max_objects,
@@ -1066,13 +1133,20 @@ def main() -> None:
         update_status = config.update_status
     )
     command_processor = CommandProcessor()
+    disk_space_monitor=DiskSpaceMonitor(
+        path=base_dir,
+        minimum_disk_space_percentage=config.minimum_disk_space_percentage,
+        interval_seconds=config.disk_interval_seconds
+    )
+    metrics_monitor=MetricsMonitor(log_interval=config.metrics_interval_seconds)
     processor = DataProcessor(
         read_db = read_db,
         status_update_manager = status_update_manager,
         table_name = args.table_name,
         command_batch_builder = tape_batch_builder,
         command_processor = command_processor,
-        metrics_monitor= MetricsMonitor(30),
+        metrics_monitor= metrics_monitor,
+        disk_space_monitor= disk_space_monitor,
         db_read_batch_size= config.read_batch_size,
         num_consumers = config.num_consumers,
         consumers_queue_size = config.consumers_queue_size,
@@ -1082,8 +1156,8 @@ def main() -> None:
     try:
         processor.run()
 
-        metrics = metrics_calculator.calculate_metrics()
-        metrics_calculator.log_metrics(metrics, config)
+        metrics = runtime_statistics.calculate_metrics()
+        runtime_statistics.log_metrics(metrics)
 
     except Exception as e:
         logger.error(f"Processing failed: {e}")

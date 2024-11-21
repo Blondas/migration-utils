@@ -22,5 +22,8 @@ arsadmin:
   od_inst: "od_instance_name"
   base_dir: "/path/to/base/directory"
 
-# Optional timeout in seconds (null means no timeout)
-timeout_seconds: null  # Set to a number like 3600 for a 1-hour timeout
+monitoring:
+  metrics_interval_seconds: 30
+  minimum_disk_space_percentage: 5
+  disk_interval_seconds: 5
+  timeout_seconds: null  # Optional timeout in seconds (null means no timeout)
