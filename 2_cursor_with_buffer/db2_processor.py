@@ -17,7 +17,6 @@ import subprocess
 import yaml
 import argparse
 
-from pkg_resources import file_ns_handler
 
 # Create handler instances
 stream_handler = logging.StreamHandler()
@@ -285,6 +284,9 @@ class RuntimeStatisticsCalculator:
                 f"Throughput: {self.format_size(int(metrics.get_throughput()))}/second",
                 "-" * 80
             ]
+
+            for i in log_entries:
+                logger.info(i)
 
 
 class CommandBatchBuilder:
