@@ -17,16 +17,21 @@ import subprocess
 import yaml
 import argparse
 
+from pkg_resources import file_ns_handler
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s.%(msecs)03d | %(levelname)-8s | %(threadName)-12s | %(funcName)s:%(lineno)d | %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S',
-    handlers=[
-        logging.StreamHandler,
-        logging.FileHandler(filename='processing.log')
-    ]
-)
+# Create handler instances
+stream_handler = logging.StreamHandler()
+file_handler = logging.FileHandler(filename='processing.log')
+
+# Create formatter and set it for the handlers
+formatter = logging.Formatter(
+    '%(asctime)s.%(msecs)03d | %(levelname)-8s | %(threadName)-12s | %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S')
+stream_handler.setFormatter(formatter)
+file_handler.setFormatter(formatter)
+
+# Configure the logging
+logging.basicConfig(level=logging.INFO,handlers=[stream_handler, file_handler])
 logger = logging.getLogger(__name__)
 
 
@@ -266,10 +271,6 @@ class RuntimeStatisticsCalculator:
         def log_metrics(self, metrics: RuntimeStatistics, config: Config) -> None:
             """Log all metrics in a formatted way"""
 
-            lst = []
-            for key, value in asdict(config):
-                lst.append(f"{key}: {value}")
-
             log_entries = [
                 "-" * 80,
                 "Processing completed. Final metrics:",
@@ -282,9 +283,6 @@ class RuntimeStatisticsCalculator:
                 f"Largest file: {self.format_size(metrics.max_size_bytes)} ({metrics.max_size_bytes:,} bytes)",
                 f"Processing rate: {metrics.get_processing_rate():.2f} files/second",
                 f"Throughput: {self.format_size(int(metrics.get_throughput()))}/second",
-                "-" * 80,
-                "Configuration:",
-                *lst,
                 "-" * 80
             ]
 
@@ -689,7 +687,6 @@ class CommandProcessor:
 
                 else:
                     # Command successful - mark all remaining objects as successful
-                    command.
                     for object_record in remaining_object_records:
                         successful_ids.add(object_record.db_record_id)
                     break
@@ -777,7 +774,7 @@ class DataProcessor:
                         ID,
                         ODSLOC,
                         ODCREATS,
-                        AGID_NAME,
+                        AGID_NAME_SRC,
                         AGNAME,
                         LOADID,
                         PRINID,
@@ -872,7 +869,7 @@ class DataProcessor:
                         ID,
                         ODSLOC,
                         ODCREATS,
-                        AGID_NAME,
+                        AGID_NAME_SRC,
                         AGNAME,
                         LOADID,
                         PRINID,
@@ -917,8 +914,8 @@ class DataProcessor:
 
     def producer(self) -> None:
         logger.debug("producer thread started")
-        # self._fetch_by_tape()
-        self._fetch_by_agname()
+        self._fetch_by_tape()
+        # self._fetch_by_agname()
 
     def consumer(self) -> None:
         logger.info("consumer started")
@@ -1073,7 +1070,7 @@ def main() -> None:
         table_name = args.table_name,
         command_batch_builder = tape_batch_builder,
         command_processor = command_processor,
-        metrics_monitor= MetricsMonitor(5),
+        metrics_monitor= MetricsMonitor(30),
         db_read_batch_size= config.read_batch_size,
         num_consumers = config.num_consumers,
         consumers_queue_size = config.consumers_queue_size,
