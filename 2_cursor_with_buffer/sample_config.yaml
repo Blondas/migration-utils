@@ -1,11 +1,12 @@
 # Database configuration
-database: "MY_DB"
+database:
+  database: "MY_DB"
 
 # Producer, Consumer threads configuration
 producer_consumer:
   read_batch_size: 50000
-  num_consumers: 8
-  consumers_queue_size: 16  # 2 * num_consumers
+  num_consumers: 50
+  consumers_queue_size: 100  # 2 * num_consumers
 
 # Database updater configuration
 db_updater:
@@ -14,7 +15,7 @@ db_updater:
 
 # ArsAdmin command configuration
 arsadmin:
-  command_max_objects: 1000
+  command_max_objects: 10000
   dir_max_elems: 32000
   user: "arsuser"
   password: null  # Optional, can be null/omitted
