@@ -1,3 +1,4 @@
+import signal
 import statistics
 import sys
 from pathlib import Path
@@ -5,7 +6,7 @@ from pathlib import Path
 import ibm_db_dbi
 import threading
 from queue import Queue, Empty
-from typing import List, Optional, Tuple, Iterator, Set, NamedTuple
+from typing import List, Optional, Tuple, Iterator, Set, NamedTuple, Callable
 from contextlib import contextmanager
 import time
 from dataclasses import dataclass, field
@@ -191,7 +192,8 @@ class DiskSpaceMonitor:
         self,
         path: str,
         minimum_disk_space_percentage: int,
-        interval_seconds: int
+        interval_seconds: int,
+        terminal_operation: Callable[[], None]
     ) -> None:
         self.path: str = path
         self.minimum_disk_space_percentage: int = minimum_disk_space_percentage
@@ -199,6 +201,7 @@ class DiskSpaceMonitor:
 
         self._monitor_thread: Optional[threading.Thread] = None
         self._stop_event: threading.Event = threading.Event()
+        self.terminal_operation: Callable[[], None] = terminal_operation
 
     def start(self) -> None:
         """Start disk monitoring in a separate thread"""
@@ -230,10 +233,20 @@ class DiskSpaceMonitor:
                     logging.error(
                         f"Free disk space {free_space:.2f}% below threshold "
                         f"{self.minimum_disk_space_percentage}%. "
-                        f"Hard killing the process."
+                        f"Running terminal operation..."
                     )
-                    # Force exit without cleanup
-                    sys.exit(1)
+
+                    # do the terminal operation before killing
+                    self.terminal_operation()
+
+                    logging.info("Killing process with SIGTERM...")
+                    # Kill the entire process group
+                    os.kill(os.getpid(), signal.SIGTERM)
+
+                    # If SIGTERM doesn't work, use SIGKILL after a short delay
+                    time.sleep(2)
+                    logging.info("Killing process with SIGKILL...")
+                    os.kill(os.getpid(), signal.SIGKILL)
 
                 threading.Event().wait(self.interval_seconds)
 
@@ -291,8 +304,8 @@ class RuntimeStatisticsCalculator:
             logger.info("Runtime statistics monitoring started")
 
         def stop(self) -> None:
-            metrics: RuntimeStatistics = self.calculate_metrics()
-            self.log_metrics(metrics)
+            metrics: RuntimeStatistics = self._calculate_metrics()
+            self._log_metrics(metrics)
 
             """Stop the monitoring thread"""
             self._shutdown_event.set()
@@ -304,8 +317,8 @@ class RuntimeStatisticsCalculator:
             """Main monitoring loop"""
             while not self._shutdown_event.is_set():
                 try:
-                    metrics: RuntimeStatistics = self.calculate_metrics()
-                    self.log_metrics(metrics)
+                    metrics: RuntimeStatistics = self._calculate_metrics()
+                    self._log_metrics(metrics)
 
                     # Sleep until next interval
                     time.sleep(self.interval_seconds)
@@ -314,7 +327,7 @@ class RuntimeStatisticsCalculator:
                     logger.error(f"Error in runtime statistics monitor: {e}")
                     time.sleep(5.0)  # Back off on error
 
-        def calculate_metrics(self) -> RuntimeStatistics:
+        def _calculate_metrics(self) -> RuntimeStatistics:
             """Calculate all metrics for files in directory tree"""
             path = Path(self.base_dir)
             if not path.exists():
@@ -348,6 +361,9 @@ class RuntimeStatisticsCalculator:
                 max_size_bytes=max(file_sizes)
             )
 
+        def calculate_and_log_metrics(self) -> None:
+            self._log_metrics(self._calculate_metrics())
+
         @staticmethod
         def format_size(size_bytes: int) -> str:
             """Format byte size into human-readable format"""
@@ -367,7 +383,7 @@ class RuntimeStatisticsCalculator:
 
             return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
-        def log_metrics(self, metrics: RuntimeStatistics) -> None:
+        def _log_metrics(self, metrics: RuntimeStatistics) -> None:
             """Log all metrics in a formatted way"""
 
             log_entries = [
@@ -1179,7 +1195,8 @@ def main() -> None:
     disk_space_monitor=DiskSpaceMonitor(
         path=base_dir,
         minimum_disk_space_percentage=config.minimum_disk_space_percentage,
-        interval_seconds=config.disk_interval_seconds
+        interval_seconds=config.disk_interval_seconds,
+        terminal_operation=runtime_statistics_calculator.calculate_and_log_metrics
     )
     metrics_monitor=MetricsMonitor(log_interval=config.metrics_interval_seconds)
     processor = DataProcessor(
