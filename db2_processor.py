@@ -1,6 +1,7 @@
 import json
 import signal
 import statistics
+from logging import Logger
 from pathlib import Path
 
 import ibm_db_dbi
@@ -21,20 +22,26 @@ import psutil
 import os
 
 
-# Create handler instances
-stream_handler = logging.StreamHandler()
-file_handler = logging.FileHandler(filename='processing.log')
-
-# Create formatter and set it for the handlers
-formatter = logging.Formatter(
-    '%(asctime)s.%(msecs)03d | %(levelname)-8s | %(threadName)-12s | %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S')
-stream_handler.setFormatter(formatter)
-file_handler.setFormatter(formatter)
-
-# Configure the logging
-logging.basicConfig(level=logging.INFO,handlers=[stream_handler, file_handler])
+# Create a module-level logger that will be replaced in main()
 logger = logging.getLogger(__name__)
+
+def setup_logging(label: str) -> Logger:
+    """Configure logging with label-specific log file"""
+    # Create handler instances
+    stream_handler = logging.StreamHandler()
+    log_filename = f'processing-{label}.log' if label else 'processing.log'
+    file_handler = logging.FileHandler(filename=log_filename)
+
+    # Create formatter and set it for the handlers
+    formatter = logging.Formatter(
+        '%(asctime)s.%(msecs)03d | %(levelname)-8s | %(threadName)-12s | %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S')
+    stream_handler.setFormatter(formatter)
+    file_handler.setFormatter(formatter)
+
+    # Configure the logging
+    logging.basicConfig(level=logging.INFO, handlers=[stream_handler, file_handler])
+    return logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -1178,13 +1185,17 @@ def load_config(config_path: Optional[str] = None) -> Config:
     )
 
 def main() -> None:
-    config: Config = load_config()
-    logger.info(f"Deleting {config.base_dir}")
-
     parser = argparse.ArgumentParser(description='Arsadmin Retrieve Command Executor')
     parser.add_argument('--table_name', help='Table name to drive payload migration', required=True)
     parser.add_argument('--label', help='Optional label to add to the base directory', default='')
     args = parser.parse_args()
+
+    # Setup logging with label
+    global logger
+    logger = setup_logging(args.label)
+
+    config: Config = load_config()
+    logger.info(f"Deleting {config.base_dir}")
 
     read_db: DB2Connection = DB2Connection(config.database, for_updates=False)
     update_db: DB2Connection = DB2Connection(config.database, for_updates=True)
