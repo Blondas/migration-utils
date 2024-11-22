@@ -1,12 +1,11 @@
+import json
 import signal
 import statistics
-import sys
-from pathlib import Path
 
 import ibm_db_dbi
 import threading
 from queue import Queue, Empty
-from typing import List, Optional, Tuple, Iterator, Set, NamedTuple, Callable
+from typing import List, Optional, Tuple, Iterator, Set, NamedTuple, Callable, Dict, Any
 from contextlib import contextmanager
 import time
 from dataclasses import dataclass, field
@@ -384,8 +383,7 @@ class RuntimeStatisticsCalculator:
             return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
         def _log_metrics(self, metrics: RuntimeStatistics) -> None:
-            """Log all metrics in a formatted way"""
-
+            # log formatted metrics
             log_entries = [
                 "-" * 80,
                 "Processing completed. Final metrics:",
@@ -396,13 +394,29 @@ class RuntimeStatisticsCalculator:
                 f"Median file size: {self.format_size(int(metrics.median_size_bytes))} ({int(metrics.median_size_bytes):,} bytes)",
                 f"Smallest file: {self.format_size(metrics.min_size_bytes)} ({metrics.min_size_bytes:,} bytes)",
                 f"Largest file: {self.format_size(metrics.max_size_bytes)} ({metrics.max_size_bytes:,} bytes)",
-                f"Processing rate: {metrics.get_processing_rate():.2f} files/second",
-                f"Throughput: {self.format_size(int(metrics.get_throughput()))}/second",
+                f"Processing rate: {metrics.get_processing_rate() * 60:.2f} files/minute",
+                f"Throughput: {self.format_size(int(metrics.get_throughput() * 60))}/minute",
                 "-" * 80
             ]
+            for entry in log_entries:
+                logger.info(entry)
 
-            for i in log_entries:
-                logger.info(i)
+            # log metrics as json
+            metrics_dict: Dict[str, Any] = {
+                "runtime_seconds": round(metrics.runtime_seconds, 2),
+                "total_files": metrics.total_files,
+                "total_size_bytes": metrics.total_size_bytes,
+                "average_file_size_bytes": int(metrics.average_file_size()),
+                "median_size_bytes": int(metrics.median_size_bytes),
+                "min_size_bytes": metrics.min_size_bytes,
+                "max_size_bytes": metrics.max_size_bytes,
+                "processing_rate_files_per_minute": round(metrics.get_processing_rate() * 60, 2),
+                "throughput_bytes_per_minute": int(metrics.get_throughput()) * 60
+            }
+            try:
+                logger.info(f"Metrics JSON: {json.dumps(metrics_dict)}")
+            except Exception as e:
+                logger.error(f"Failed to serialize metrics to JSON: {str(e)}")
 
 
 class CommandBatchBuilder:
@@ -1162,40 +1176,22 @@ def load_config(config_path: Optional[str] = None) -> Config:
         timeout_seconds=yaml_config['monitoring']['timeout_seconds'],
     )
 
-
-from pathlib import Path
-import shutil
-from typing import Union
-
-
-def delete_directory(path: str) -> None:
-    try:
-        target_path = Path(path).resolve()
-
-        if not target_path.exists():
-            raise ValueError(f"Directory does not exist: {target_path}")
-
-        if not target_path.is_dir():
-            raise ValueError(f"Path is not a directory: {target_path}")
-
-        shutil.rmtree(target_path)
-
-    except PermissionError as e:
-        raise
-
 def main() -> None:
     config: Config = load_config()
     logger.info(f"Deleting {config.base_dir}")
-    delete_directory(config.base_dir)
 
     parser = argparse.ArgumentParser(description='Arsadmin Retrieve Command Executor')
     parser.add_argument('--table_name', help='Table name to drive payload migration', required=True)
+    parser.add_argument('--label', help='Optional label to add to the base directory', default='')
     args = parser.parse_args()
 
     read_db: DB2Connection = DB2Connection(config.database, for_updates=False)
     update_db: DB2Connection = DB2Connection(config.database, for_updates=True)
 
-    base_dir: str = f'{config.base_dir}/{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}'
+    # create base_dir:
+    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    label_prefix = f"{args.label}-" if args.label else ""
+    base_dir = f'{config.base_dir}/{label_prefix}{current_time}'
 
     runtime_statistics_calculator = RuntimeStatisticsCalculator(base_dir, config.runtime_statistics_interval)
 
