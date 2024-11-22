@@ -1176,23 +1176,22 @@ def load_config(config_path: Optional[str] = None) -> Config:
         timeout_seconds=yaml_config['monitoring']['timeout_seconds'],
     )
 
-
-from pathlib import Path
-import shutil
-from typing import Union
-
 def main() -> None:
     config: Config = load_config()
     logger.info(f"Deleting {config.base_dir}")
 
     parser = argparse.ArgumentParser(description='Arsadmin Retrieve Command Executor')
     parser.add_argument('--table_name', help='Table name to drive payload migration', required=True)
+    parser.add_argument('--label', help='Optional label to add to the base directory', default='')
     args = parser.parse_args()
 
     read_db: DB2Connection = DB2Connection(config.database, for_updates=False)
     update_db: DB2Connection = DB2Connection(config.database, for_updates=True)
 
-    base_dir: str = f'{config.base_dir}/{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}'
+    # create base_dir:
+    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    label_prefix = f"{args.label}-" if args.label else ""
+    base_dir = f'{config.base_dir}/{label_prefix}{current_time}'
 
     runtime_statistics_calculator = RuntimeStatisticsCalculator(base_dir, config.runtime_statistics_interval)
 
