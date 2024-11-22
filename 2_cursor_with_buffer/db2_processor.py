@@ -1163,8 +1163,30 @@ def load_config(config_path: Optional[str] = None) -> Config:
     )
 
 
+from pathlib import Path
+import shutil
+from typing import Union
+
+
+def delete_directory(path: str) -> None:
+    try:
+        target_path = Path(path).resolve()
+
+        if not target_path.exists():
+            raise ValueError(f"Directory does not exist: {target_path}")
+
+        if not target_path.is_dir():
+            raise ValueError(f"Path is not a directory: {target_path}")
+
+        shutil.rmtree(target_path)
+
+    except PermissionError as e:
+        raise
+
 def main() -> None:
     config: Config = load_config()
+    logger.info(f"Deleting {config.base_dir}")
+    delete_directory(config.base_dir)
 
     parser = argparse.ArgumentParser(description='Arsadmin Retrieve Command Executor')
     parser.add_argument('--table_name', help='Table name to drive payload migration', required=True)
