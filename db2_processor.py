@@ -34,7 +34,7 @@ def setup_logging(label: str) -> Logger:
 
     # Create formatter and set it for the handlers
     formatter = logging.Formatter(
-        '%(asctime)s.%(msecs)03d | %(levelname)-8s | %(threadName)-12s | %(message)s',
+        f'%(asctime)s.%(msecs)03d | %(levelname)-8s | {label:<10} | %(threadName)-12s | %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S')
     stream_handler.setFormatter(formatter)
     file_handler.setFormatter(formatter)
@@ -185,13 +185,37 @@ class MetricsMonitor:
 
     def _log_metrics(self) -> None:
         """Log current metrics"""
-        logger.info(
-            f"Processing metrics - "
-            f"Queue size: {self._queue.qsize()}/{self._queue.maxsize}, "
-            f"Update queue size: {self._update_queue.qsize()}/{self._update_queue.maxsize}, "
-            f"Commands processed: {self.stats.processed_commands:,}, "
-            f"Total objects processed: {self.stats.processed_objects:,}"
-        )
+        # Log formatted metrics
+        log_entries = [
+            "-" * 80,
+            "Current Processing Metrics:",
+            f"Queue size: {self._queue.qsize()}/{self._queue.maxsize}",
+            f"Update queue size: {self._update_queue.qsize()}/{self._update_queue.maxsize}",
+            f"Commands processed: {self.stats.processed_commands:,}",
+            f"Total objects processed: {self.stats.processed_objects:,}",
+            "-" * 80
+        ]
+
+        for entry in log_entries:
+            logger.info(entry)
+
+        # Log metrics as JSON
+        metrics_dict = {
+            "queue_size": self._queue.qsize(),
+            "queue_maxsize": self._queue.maxsize,
+            "update_queue_size": self._update_queue.qsize(),
+            "update_queue_maxsize": self._update_queue.maxsize,
+            "commands_processed": self.stats.processed_commands,
+            "total_objects_processed": self.stats.processed_objects,
+            "queue_utilization_percentage": round((self._queue.qsize() / self._queue.maxsize) * 100, 2),
+            "update_queue_utilization_percentage": round(
+                (self._update_queue.qsize() / self._update_queue.maxsize) * 100, 2)
+        }
+
+        try:
+            logger.info(f"Metrics JSON: {json.dumps(metrics_dict)}")
+        except Exception as e:
+            logger.error(f"Failed to serialize metrics to JSON: {str(e)}")
 
 
 class DiskSpaceMonitor:

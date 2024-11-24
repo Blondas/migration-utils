@@ -32,6 +32,14 @@ while IFS= read -r table_name || [ -n "$table_name" ]; do
     echo "$(date '+%Y-%m-%d %H:%M:%S') Cleaning up directory for $table_name"
     rm -rf "${CONFIG_BASE_DIR:?}/$table_name"*
 
+    # Delete the folder and wait for completion
+    echo "$(date '+%Y-%m-%d %H:%M:%S') Cleaning up directory for $table_name"
+    rm -rf "${CONFIG_BASE_DIR:?}/$table_name"*
+    while [ -d "${CONFIG_BASE_DIR:?}/$table_name"* ] || [ -f "${CONFIG_BASE_DIR:?}/$table_name"* ]; do
+        sleep 10
+        echo "Waiting for deletion to complete..."
+    done
+
     # Run the processor
     echo "$(date '+%Y-%m-%d %H:%M:%S') Running db2_processor for $table_name"
     python3 db2_processor.py --table_name "$table_name" --label "$table_name"
