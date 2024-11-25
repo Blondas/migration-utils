@@ -29,9 +29,11 @@ while IFS= read -r table_name || [ -n "$table_name" ]; do
     echo "$(date '+%Y-%m-%d %H:%M:%S') Processing table: $table_name"
 
     # Delete the folder and wait for completion
-    echo "$(date '+%Y-%m-%d %H:%M:%S') Cleaning up directory for $table_name"
-    rm -rf "${CONFIG_BASE_DIR:?}/$table_name"*
-    while [ -d "${CONFIG_BASE_DIR:?}/$table_name"* ] || [ -f "${CONFIG_BASE_DIR:?}/$table_name"* ]; do
+    echo "$(date '+%Y-%m-%d %H:%M:%S') Cleaning up directory"
+    rm -rf "${CONFIG_BASE_DIR:?}"
+    while [ -d "${CONFIG_BASE_DIR:?}" ]; do
+      echo "$(date '+%Y-%m-%d %H:%M:%S') Disk usage:"
+      df -m .
         sleep 10
         echo "Waiting for deletion to complete..."
     done
